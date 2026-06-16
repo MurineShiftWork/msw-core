@@ -1,0 +1,112 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "msw-core"
+dynamic = ["version"]
+description = "Murine Shift Work acquisition stack: CLI, hardware, hooks, and logic."
+readme = { file = "README.md", content-type = "text/markdown" }
+license = { file = "LICENSE" }
+authors = [
+    { name = "Lars B. Rollik", email = "lars@rollik.me" },
+]
+requires-python = ">=3.12"
+dependencies = [
+    "msw-io>=1.0.2",
+    "msw-plugin-api>=0.1.0",
+    "ttl-barcoder>=0.4.1",
+    "pydantic>=2.0",
+    "rich",
+    "pyyaml",
+    "numpy",
+    "scipy",
+    "pandas",
+    "matplotlib",
+    "seaborn",
+    "pyserial",
+    "pybpod-api",
+    "one-axis-stage",
+    "sounddevice",
+]
+
+[project.urls]
+Homepage = "https://github.com/MurineShiftWork/msw-core"
+"Issue Tracker" = "https://github.com/MurineShiftWork/msw-core/issues"
+
+[project.scripts]
+murineshiftwork = "murineshiftwork.cli:run_cli"
+msw = "murineshiftwork.cli:run_cli"
+
+[project.optional-dependencies]
+dev = [
+    "commitizen",
+    "pytest>=8",
+    "pytest-cov",
+    "pre-commit",
+    "mypy",
+    "types-PyYAML",
+]
+docs = [
+    "mkdocs-material",
+    "mkdocstrings[python]",
+]
+
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.1.0"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/murineshiftwork/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/murineshiftwork"]
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=src/murineshiftwork --durations=0"
+
+# ---------------------------------------------------------------------------
+# Ruff
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 88
+indent-width = 4
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "N", "UP", "SIM", "PTH"]
+ignore = ["E501", "B017", "N817"]
+fixable = ["ALL"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+docstring-code-format = true
+
+# ---------------------------------------------------------------------------
+# Mypy
+# ---------------------------------------------------------------------------
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = false
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# Commitizen
+# ---------------------------------------------------------------------------
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version_provider = "commitizen"
+version = "0.1.0"
+tag_format = "v$version"
+update_changelog_on_bump = false
+version_files = ["VERSION"]
