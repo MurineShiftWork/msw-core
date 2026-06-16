@@ -127,7 +127,7 @@ class ValveCalibration(BaseModel):
         except RuntimeError as exc:
             raise ValueError(
                 f"Exponential fit failed: check calibration points for valve.\n{exc}"
-            )
+            ) from exc
 
     def _calibrated_range_ul(self) -> tuple[float, float]:
         """Return (min_ul, max_ul) of the calibrated volume range."""

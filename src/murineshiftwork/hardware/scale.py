@@ -28,7 +28,7 @@ class WeighingScaleBase(ABC):
     def read_weight_blocking(self) -> float:
         """Return current weight in grams, blocking until a stable reading is available."""
 
-    def stop(self) -> None:
+    def stop(self) -> None:  # noqa: B027
         """Disconnect / clean up (optional: not all hardware needs it)."""
 
 

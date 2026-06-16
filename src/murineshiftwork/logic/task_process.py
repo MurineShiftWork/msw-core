@@ -467,11 +467,11 @@ class TaskProcess:
                 mod = importlib.import_module(
                     f"murineshiftwork.tasks.{self.task_name}.{self.task_name}"
                 )
-            TaskClass = getattr(mod, "Task")
+            task_class = mod.Task
         except (ImportError, AttributeError) as exc:
             raise ImportError(
                 f"Cannot import 'Task' from task '{self.task_name}': {exc}"
-            )
+            ) from exc
 
         plot_spec_src = Path(mod.__file__).parent / "plot_spec.yaml"
         if plot_spec_src.exists():
@@ -479,7 +479,7 @@ class TaskProcess:
             shutil.copy2(plot_spec_src, dest)
             logging.debug("plot_spec copied: %s", dest.name)
 
-        self.task_runner = TaskClass(bpod=self.bpod, **self.input_kwargs)
+        self.task_runner = task_class(bpod=self.bpod, **self.input_kwargs)
 
     def run_task(self):
         """Run the Task thread."""

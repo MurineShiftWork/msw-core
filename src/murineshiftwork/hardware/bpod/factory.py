@@ -88,8 +88,8 @@ class BpodFactory:
                 hw = self._bpod._hardware
                 fw = getattr(hw, "firmware_version", "?")
                 mt = getattr(hw, "machine_type", None)
-                _MACHINE_NAMES = {1: "r0.5", 2: "r0.7", 3: "r2.0", 4: "r2+"}
-                machine = _MACHINE_NAMES.get(mt, f"type={mt}")
+                machine_names = {1: "r0.5", 2: "r0.7", 3: "r2.0", 4: "r2+"}
+                machine = machine_names.get(mt, f"type={mt}")
                 logging.info(
                     "Bpod connected on %s | %s | fw %s | %s",
                     self.serial_port,

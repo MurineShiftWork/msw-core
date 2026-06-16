@@ -176,6 +176,7 @@ class CalibrationDataLiquid(CalibrationData):
                 zip(
                     data_for_valve["valve_opening_time"].tolist(),
                     data_for_valve["volume_ul"].tolist(),
+                    strict=False,
                 )
             )
             from murineshiftwork.logic.config import ValveCalibration

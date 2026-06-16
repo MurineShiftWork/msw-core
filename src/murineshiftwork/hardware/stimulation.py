@@ -104,7 +104,7 @@ def generate_waveform_voltages(
 
 
 class Stimulation:
-    pulsePal: Any = None
+    pulsepal: Any = None
     port = ""
 
     # Size 4: one entry per output channel (0-indexed, matching pypulsepal).
@@ -186,10 +186,10 @@ class Stimulation:
         for channel in self.in_dict["channels_stimulation"]:
             self._set_channel_params(
                 channel=int(channel),
-                phase1Duration=round(float(self.in_dict["pulse_duration"]), 3),
+                phase1_duration=round(float(self.in_dict["pulse_duration"]), 3),
                 pulse_frequency=round(float(self.in_dict["pulse_frequency"]), 3),
-                pulseTrainDuration=float(self.in_dict["pulse_train_duration"]),
-                pulseTrainDelay=round(float(self.in_dict["pulse_train_delay"]), 3),
+                pulse_train_duration=float(self.in_dict["pulse_train_duration"]),
+                pulse_train_delay=round(float(self.in_dict["pulse_train_delay"]), 3),
                 laser_power=laser_power,
             )
             self.channels_stimulation[int(channel)] = 1
@@ -199,10 +199,10 @@ class Stimulation:
             # (BNC2110 threshold ~2V; modulated stim voltage is sub-threshold at low power).
             self._set_channel_params(
                 channel=int(channel),
-                phase1Duration=round(float(self.in_dict["pulse_duration"]), 3),
+                phase1_duration=round(float(self.in_dict["pulse_duration"]), 3),
                 pulse_frequency=round(float(self.in_dict["pulse_frequency"]), 3),
-                pulseTrainDuration=float(self.in_dict["pulse_train_duration"]),
-                pulseTrainDelay=round(float(self.in_dict["pulse_train_delay"]), 3),
+                pulse_train_duration=float(self.in_dict["pulse_train_duration"]),
+                pulse_train_delay=round(float(self.in_dict["pulse_train_delay"]), 3),
                 laser_power=None,  # always 5V
             )
             self.channels_ttl_copy[int(channel)] = 1
@@ -219,43 +219,43 @@ class Stimulation:
     def _set_channel_params(
         self,
         channel=0,
-        isBiphasic=0,
+        is_biphasic=0,
         laser_power=None,
-        restingVoltage=0,
-        phase1Duration=0.005,
+        resting_voltage=0,
+        phase1_duration=0.005,
         pulse_frequency=0.05,
-        pulseTrainDuration=3000.0,
-        pulseTrainDelay=0.0,
+        pulse_train_duration=3000.0,
+        pulse_train_delay=0.0,
     ):
-        phase1Voltage = power_to_voltage(laser_power) if laser_power is not None else 5
+        phase1_voltage = power_to_voltage(laser_power) if laser_power is not None else 5
         ipi = 1 / float(pulse_frequency)
         self._channel_params[channel] = {
-            "isBiphasic": isBiphasic,
-            "phase1Voltage": phase1Voltage,
-            "restingVoltage": restingVoltage,
-            "phase1Duration": round(float(phase1Duration), 6),
-            "interPulseInterval": round(ipi - phase1Duration, 6),
-            "pulseTrainDuration": float(pulseTrainDuration),
-            "pulseTrainDelay": round(float(pulseTrainDelay), 3),
+            "isBiphasic": is_biphasic,
+            "phase1Voltage": phase1_voltage,
+            "restingVoltage": resting_voltage,
+            "phase1Duration": round(float(phase1_duration), 6),
+            "interPulseInterval": round(ipi - phase1_duration, 6),
+            "pulseTrainDuration": float(pulse_train_duration),
+            "pulseTrainDelay": round(float(pulse_train_delay), 3),
         }
 
     def set_power(self, laser_power: float, sync: bool = True) -> None:
         """Update laser power (0.0-1.0) without changing timing params."""
         self._validate_power(laser_power)
         self.in_dict["laser_power"] = laser_power
-        phase1Voltage = power_to_voltage(laser_power)
+        phase1_voltage = power_to_voltage(laser_power)
         for channel in self.in_dict["channels_stimulation"]:
-            if self.pulsePal is not None and sync:
-                self.pulsePal.program_one_param(
+            if self.pulsepal is not None and sync:
+                self.pulsepal.program_one_param(
                     channel=int(channel),
                     param_name="phase1Voltage",
-                    param_value=phase1Voltage,
+                    param_value=phase1_voltage,
                 )
             if channel in self._channel_params:
-                self._channel_params[channel]["phase1Voltage"] = phase1Voltage
+                self._channel_params[channel]["phase1Voltage"] = phase1_voltage
             logging.info(
                 f"PulsePal: Ch{channel} power set to {laser_power:.2f} "
-                f"({phase1Voltage:.3f}V on Doric LDFL5 input)"
+                f"({phase1_voltage:.3f}V on Doric LDFL5 input)"
             )
 
     def set_pulse_params(
@@ -280,15 +280,15 @@ class Stimulation:
         for channel in self.in_dict["channels_stimulation"]:
             self._set_channel_params(
                 channel=int(channel),
-                phase1Duration=round(float(self.in_dict["pulse_duration"]), 3),
+                phase1_duration=round(float(self.in_dict["pulse_duration"]), 3),
                 pulse_frequency=round(float(self.in_dict["pulse_frequency"]), 3),
-                pulseTrainDuration=float(self.in_dict["pulse_train_duration"]),
-                pulseTrainDelay=round(float(self.in_dict["pulse_train_delay"]), 3),
+                pulse_train_duration=float(self.in_dict["pulse_train_duration"]),
+                pulse_train_delay=round(float(self.in_dict["pulse_train_delay"]), 3),
                 laser_power=self.in_dict.get("laser_power"),
             )
-            if self.pulsePal is not None and sync:
+            if self.pulsepal is not None and sync:
                 for param_name, value in self._channel_params[int(channel)].items():
-                    self.pulsePal.program_one_param(
+                    self.pulsepal.program_one_param(
                         channel=int(channel),
                         param_name=param_name,
                         param_value=value,
@@ -324,7 +324,7 @@ class Stimulation:
         n_pad = max(0, n_cycle - len(voltages))
         padded_voltages = voltages + [0.0] * n_pad
 
-        self.pulsePal.upload_custom_waveform(
+        self.pulsepal.upload_custom_waveform(
             pulse_train_id=slot,
             pulse_width=1.0 / _PULSEPAL_SAMPLE_RATE,
             pulse_voltages=padded_voltages,
@@ -335,15 +335,15 @@ class Stimulation:
             ch = int(ch)
             # Each waveform sample must last exactly one sample period; the gap
             # between repetitions is the trailing zero-padding in padded_voltages.
-            self.pulsePal.program_one_param(ch, "phase1Duration", _pulse_width)
-            self.pulsePal.program_one_param(ch, "interPulseInterval", 0.0)
-            self.pulsePal.program_one_param(ch, "customTrainID", slot + 1)
-            self.pulsePal.program_one_param(ch, "customTrainTarget", 0)
-            self.pulsePal.program_one_param(ch, "customTrainLoop", 1)
+            self.pulsepal.program_one_param(ch, "phase1Duration", _pulse_width)
+            self.pulsepal.program_one_param(ch, "interPulseInterval", 0.0)
+            self.pulsepal.program_one_param(ch, "customTrainID", slot + 1)
+            self.pulsepal.program_one_param(ch, "customTrainTarget", 0)
+            self.pulsepal.program_one_param(ch, "customTrainLoop", 1)
             if self.in_dict.get("trigger_mode") == "gated":
                 # Prevent pulseTrainDuration from expiring mid-gate; gate-low is the
                 # only stop signal. 3600 s is safe for any realistic session.
-                self.pulsePal.program_one_param(ch, "pulseTrainDuration", 3600.0)
+                self.pulsepal.program_one_param(ch, "pulseTrainDuration", 3600.0)
 
         logging.info(
             "PulsePal: waveform slot %d: %d samples / %.2f ms "
@@ -365,12 +365,12 @@ class Stimulation:
         return total_s
 
     def _sync_channel_configs(self) -> None:
-        """Write _channel_params into pulsePal.channel_configs and unlink inactive channels."""
-        for cfg in self.pulsePal.channel_configs:
+        """Write _channel_params into pulsepal.channel_configs and unlink inactive channels."""
+        for cfg in self.pulsepal.channel_configs:
             cfg.linkTriggerChannel1 = False
             cfg.linkTriggerChannel2 = False
         for ch, params in self._channel_params.items():
-            cfg = self.pulsePal.channel_configs[ch]
+            cfg = self.pulsepal.channel_configs[ch]
             for k, v in params.items():
                 if hasattr(cfg, k):
                     setattr(cfg, k, v)
@@ -378,18 +378,18 @@ class Stimulation:
     def connect(self, handle=None):
         self._owns_connection = handle is None
         if handle is None:
-            self.pulsePal = _PulsePal(serial_port=self.port)
+            self.pulsepal = _PulsePal(serial_port=self.port)
             for channel, params in self._channel_params.items():
                 for param_name, value in params.items():
-                    self.pulsePal.program_one_param(
+                    self.pulsepal.program_one_param(
                         channel=channel,
                         param_name=param_name,
                         param_value=value,
                     )
         else:
-            self.pulsePal = handle
+            self.pulsepal = handle
             self._sync_channel_configs()
-            self.pulsePal.sync_all_params()
+            self.pulsepal.sync_all_params()
 
         self.off()
 
@@ -402,19 +402,19 @@ class Stimulation:
         for channel in list(self.in_dict["channels_stimulation"]) + list(
             self.in_dict["channels_ttl_copy"]
         ):
-            self.pulsePal.set_continuous(channel=int(channel), state=_cont_state)
+            self.pulsepal.set_continuous(channel=int(channel), state=_cont_state)
 
         # Set trigger links: 1 only for active channels, 0 for all others.
         for trigger_ch in self.in_dict["trigger_channels_for_stimulation"]:
             if trigger_ch not in (0, 1):
                 continue
             link_param = f"linkTriggerChannel{trigger_ch + 1}"
-            for out_ch in range(self.pulsePal.nr_output_channels):
+            for out_ch in range(self.pulsepal.nr_output_channels):
                 active = bool(
                     self.channels_stimulation[out_ch] or self.channels_ttl_copy[out_ch]
                 )
                 try:
-                    self.pulsePal.program_one_param(
+                    self.pulsepal.program_one_param(
                         channel=out_ch,
                         param_name=link_param,
                         param_value=1 if active else 0,
@@ -431,7 +431,7 @@ class Stimulation:
                 "toggle",
                 "gated",
             ):
-                self.pulsePal.program_trigger_channel(
+                self.pulsepal.program_trigger_channel(
                     trigger_channel=trigger_ch,
                     trigger_mode=self.in_dict["trigger_mode"],
                 )
@@ -449,7 +449,7 @@ class Stimulation:
     def on(self):
         if not self.emergency_off_bool:
             ch = self.channels_stimulation
-            self.pulsePal.trigger_selected_channels(
+            self.pulsepal.trigger_selected_channels(
                 channel_1=bool(ch[0]) if len(ch) > 0 else False,
                 channel_2=bool(ch[1]) if len(ch) > 1 else False,
                 channel_3=bool(ch[2]) if len(ch) > 2 else False,
@@ -461,8 +461,8 @@ class Stimulation:
             raise RuntimeError("Stimulation module is in emergency-off state.")
 
     def off(self):
-        if self.pulsePal is not None:
-            self.pulsePal.stop_all_outputs()
+        if self.pulsepal is not None:
+            self.pulsepal.stop_all_outputs()
             self.channels_currently_active = self.channels_inactive
 
     def _check_channels_active_reset(self):
@@ -473,21 +473,21 @@ class Stimulation:
             self.channels_currently_active = self.channels_inactive
 
     def disconnect(self):
-        if self.pulsePal is not None:
+        if self.pulsepal is not None:
             try:
-                self.pulsePal.stop_all_outputs()
+                self.pulsepal.stop_all_outputs()
                 if getattr(self, "_owns_connection", True):
-                    self.pulsePal.save_settings()
+                    self.pulsepal.save_settings()
                 else:
-                    fw = getattr(self.pulsePal, "firmware_version", None)
-                    self.pulsePal._pulsepal_set_display(
+                    fw = getattr(self.pulsepal, "firmware_version", None)
+                    self.pulsepal._pulsepal_set_display(
                         row1="PulsePal",
                         row2=f"fw{fw}" if fw else "Ready",
                     )
             except Exception:
                 pass
             if getattr(self, "_owns_connection", True):
-                self.pulsePal = None
+                self.pulsepal = None
         logging.info("PulsePal: disconnected.")
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -499,9 +499,9 @@ class Stimulation:
 
     def is_open(self) -> bool:
         try:
-            if self.pulsePal is None:
+            if self.pulsepal is None:
                 return False
-            return self.pulsePal._arcom.serial_object.is_open  # type: ignore[union-attr]
+            return self.pulsepal._arcom.serial_object.is_open  # type: ignore[union-attr]
         except Exception:
             logging.debug("Cannot check if PulsePal is connected.")
             return False
