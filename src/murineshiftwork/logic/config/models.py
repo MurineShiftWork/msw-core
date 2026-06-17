@@ -246,6 +246,7 @@ class CameraUnit(BaseModel):
     """Per-camera specification for the FLIR/Bonsai backend."""
 
     index: int  # SDK enumeration index; run `msw flir list-cameras` to resolve
+    name: str = ""  # human label, e.g. "top" or "front"; used in artifact filenames
 
 
 class CameraConfig(BaseModel):

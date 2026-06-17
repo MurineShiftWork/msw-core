@@ -7,8 +7,14 @@ task code never branches on camera backend:
     if conductor:
         conductor.start()
         conductor.setup_agents()
-        # ... after TaskProcess builds session paths:
-        conductor.initialize_acquisition(acquisition_path=..., acquisition_name=...)
+        # After TaskProcess builds session paths AND task code has generated
+        # video_flir paths via generate_session_paths(acq_type="video_flir"):
+        conductor.initialize_acquisition(
+            acquisition_path=...,  # used by RCE
+            acquisition_name=...,  # used by RCE
+            acqdir=...,            # used by FLIR: full path to video_flir acq dir
+            basename=...,          # used by FLIR: session_basename of video_flir acq
+        )
         conductor.start_preview()
         conductor.start_recording()
         ...
@@ -23,9 +29,7 @@ flir_bonsai : BonsaiCameraRunner/MultiCameraRunner from msw_flir_bonsai.  Lazy i
 
 from __future__ import annotations
 
-import datetime
 import logging
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -104,6 +108,8 @@ class RceConductorAdapter:
 # ---------------------------------------------------------------------------
 # FLIR/Bonsai client
 
+_MSWFLIR_PREFIX = "mswflir"  # matches msw_flir_bonsai.MSWFLIR_PREFIX
+
 
 class FlirBonsaiClient:
     """Camera client for FLIR cameras driven by Bonsai subprocesses.
@@ -112,21 +118,26 @@ class FlirBonsaiClient:
     (one per camera) via msw_flir_bonsai.MultiCameraRunner.  All msw_flir_bonsai
     imports are deferred so the package is not required on machines using RCE cameras.
 
+    v4 namespace: the caller builds the video_flir acquisition paths via
+    ``generate_session_paths(acq_type="video_flir", linked_to=session_container)``
+    and passes them directly to ``initialize_acquisition(acqdir=..., basename=...)``.
+    No path derivation happens here.
+
     Recording lifecycle:
-        start()                → no-op (Bonsai starts with recording: no preview mode)
-        setup_agents()         → no-op
-        initialize_acquisition → buffers output path and session name
-        start_preview()        → no-op
-        start_recording()      → creates MultiCameraRunner and starts subprocesses
-        stop_acquisition()     → stops subprocesses and waits for clean exit
-        stop()                 → cleanup; safe to call even if never started
+        start()                -> no-op (Bonsai starts with recording: no preview mode)
+        setup_agents()         -> no-op
+        initialize_acquisition -> stores pre-built acqdir + basename; caller must mkdir
+        start_preview()        -> no-op
+        start_recording()      -> creates MultiCameraRunner and starts subprocesses
+        stop_acquisition()     -> stops subprocesses and waits for clean exit
+        stop()                 -> cleanup; safe to call even if never started
     """
 
     def __init__(self, config: CameraConfig, output_dir: str) -> None:
         self._config = config
         self._output_dir = output_dir
-        self._acq_name: str = "session"
-        self._acq_path: str = ""
+        self._acqdir: str = ""
+        self._basename: str = ""
         self._runner: Any = None
 
     def start(self) -> None:
@@ -136,12 +147,14 @@ class FlirBonsaiClient:
         pass
 
     def initialize_acquisition(
-        self, acquisition_path: str = "", acquisition_name: str = "", **_: Any
+        self,
+        acqdir: str = "",
+        basename: str = "",
+        **_: Any,
     ) -> None:
-        self._acq_path = acquisition_path
-        self._acq_name = acquisition_name or (
-            acquisition_path.split("/")[-1] if acquisition_path else "session"
-        )
+        self._acqdir = acqdir
+        self._basename = basename
+        log.debug(f"FlirBonsaiClient: acqdir={acqdir!r} basename={basename!r}")
 
     def start_preview(self) -> None:
         pass
@@ -153,97 +166,41 @@ class FlirBonsaiClient:
         workflow = cfg.workflow or f"run-flir-{cfg.driver}-1cam"
         bonsai_exe = cfg.bonsai_exe or None
 
-        indices = (
-            [cam.index for cam in cfg.cameras]
+        cameras = (
+            cfg.cameras
             if cfg.cameras
-            else list(range(cfg.n_cameras))
+            else [
+                type("_Cam", (), {"index": i, "name": ""})()
+                for i in range(cfg.n_cameras)
+            ]
         )
-        runners = [
-            BonsaiCameraRunner(
-                workflow=workflow,
-                output_dir=self._output_dir,
-                session=f"{self._acq_name}__cam{idx}",
-                cam_index=idx,
-                driver=cfg.driver,
-                bonsai_exe=bonsai_exe,
+
+        runners = []
+        for cam in cameras:
+            cam_label = (
+                f"{cam.name}.{cam.index}"
+                if getattr(cam, "name", "")
+                else f"cam{cam.index}"
             )
-            for idx in indices
-        ]
+            cam_basename = f"{self._basename}.{_MSWFLIR_PREFIX}.{cam_label}"
+            runners.append(
+                BonsaiCameraRunner(
+                    workflow=workflow,
+                    acqdir=self._acqdir,
+                    cam_basename=cam_basename,
+                    cam_index=cam.index,
+                    driver=cfg.driver,
+                    bonsai_exe=bonsai_exe,
+                )
+            )
 
         self._runner = MultiCameraRunner(runners)
+        labels = [f"{getattr(c, 'name', '') or 'cam'}{c.index}" for c in cameras]
         log.info(
-            f"FlirBonsaiClient: starting {len(indices)} camera(s) "
-            f"driver={cfg.driver} indices={indices} session={self._acq_name!r}"
+            f"FlirBonsaiClient: starting {len(cameras)} camera(s) "
+            f"driver={cfg.driver} cameras={labels} acqdir={self._acqdir!r}"
         )
         self._runner.start()
-        self._write_flir_meta(indices, cfg)
-
-    def _write_flir_meta(self, indices: list[int], cfg: CameraConfig) -> None:
-        """Write .flir.meta.yaml, merging per-camera meta written by Bonsai at startup.
-
-        Bonsai writes {output_dir}/{acq_name}__cam{index}__meta.yaml for each
-        camera (see docs/plans/PLAN_flir_bonsai_serial.md for workflow changes).
-        This method polls for those files for up to 10 s then writes the combined
-        session-level sidecar.  Missing cam_meta files are included with empty serial.
-        """
-        import time
-
-        import yaml
-
-        cam_metas: dict[int, dict[str, Any]] = {}
-        deadline = time.monotonic() + 10.0
-        while time.monotonic() < deadline and len(cam_metas) < len(indices):
-            for idx in indices:
-                if idx not in cam_metas:
-                    p = (
-                        Path(self._output_dir)
-                        / f"{self._acq_name}__cam{idx}__meta.yaml"
-                    )
-                    if p.exists():
-                        try:
-                            cam_metas[idx] = yaml.safe_load(p.read_text()) or {}
-                        except Exception:
-                            cam_metas[idx] = {}
-            if len(cam_metas) < len(indices):
-                time.sleep(0.5)
-
-        if len(cam_metas) < len(indices):
-            missing = [i for i in indices if i not in cam_metas]
-            log.warning(
-                f"FlirBonsaiClient: cam_meta not found for indices {missing} "
-                "after 10 s: serial will be absent from sidecar. "
-                "Update Bonsai workflows per docs/plans/PLAN_flir_bonsai_serial.md"
-            )
-
-        cams_meta = [
-            {
-                "cam_index": idx,
-                "bonsai_session": f"{self._acq_name}__cam{idx}",
-                **cam_metas.get(idx, {}),
-            }
-            for idx in indices
-        ]
-
-        meta: dict[str, Any] = {
-            "flir_acq_format_version": 1,
-            "session": self._acq_name,
-            "datetime": datetime.datetime.now().isoformat(timespec="seconds"),
-            "driver": cfg.driver,
-            "workflow": cfg.workflow or f"run-flir-{cfg.driver}-1cam",
-            "bonsai_exe": cfg.bonsai_exe or os.environ.get("BONSAI_EXE", ""),
-            "cameras": cams_meta,
-        }
-
-        out_dir = Path(self._output_dir)
-        if self._acq_path:
-            out_dir = out_dir / self._acq_path
-        out_dir.mkdir(parents=True, exist_ok=True)
-        sidecar = out_dir / f"{self._acq_name}.flir.meta.yaml"
-
-        with sidecar.open("w") as fh:
-            yaml.dump(meta, fh, default_flow_style=False, sort_keys=False)
-
-        log.info(f"FlirBonsaiClient: wrote FLIR metadata to {sidecar}")
 
     def stop_acquisition(self) -> None:
         if self._runner is None:
