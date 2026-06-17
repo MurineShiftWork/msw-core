@@ -166,15 +166,21 @@ class FlirBonsaiClient:
         workflow = cfg.workflow or f"run-flir-{cfg.driver}-1cam"
         bonsai_exe = cfg.bonsai_exe or None
 
-        cameras = cfg.cameras if cfg.cameras else [
-            type("_Cam", (), {"index": i, "name": ""})()
-            for i in range(cfg.n_cameras)
-        ]
+        cameras = (
+            cfg.cameras
+            if cfg.cameras
+            else [
+                type("_Cam", (), {"index": i, "name": ""})()
+                for i in range(cfg.n_cameras)
+            ]
+        )
 
         runners = []
         for cam in cameras:
             cam_label = (
-                f"{cam.name}.{cam.index}" if getattr(cam, "name", "") else f"cam{cam.index}"
+                f"{cam.name}.{cam.index}"
+                if getattr(cam, "name", "")
+                else f"cam{cam.index}"
             )
             cam_basename = f"{self._basename}.{_MSWFLIR_PREFIX}.{cam_label}"
             runners.append(
@@ -189,9 +195,7 @@ class FlirBonsaiClient:
             )
 
         self._runner = MultiCameraRunner(runners)
-        labels = [
-            f"{getattr(c, 'name', '') or 'cam'}{c.index}" for c in cameras
-        ]
+        labels = [f"{getattr(c, 'name', '') or 'cam'}{c.index}" for c in cameras]
         log.info(
             f"FlirBonsaiClient: starting {len(cameras)} camera(s) "
             f"driver={cfg.driver} cameras={labels} acqdir={self._acqdir!r}"
