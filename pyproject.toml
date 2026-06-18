@@ -26,7 +26,7 @@ dependencies = [
     "seaborn",
     "pyserial",
     "pybpod-api",
-    "sca",  # undeclared dep of pybpod-api — must be listed explicitly
+    "safe-and-collaborative-architecture",  # provides sca namespace; undeclared dep of pybpod-api
     "one-axis-stage>=0.2.0",
     "sounddevice",
 ]
