@@ -1,0 +1,13 @@
+name: PR Review
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  review:
+    name: Review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Placeholder
+        run: echo "PR review placeholder"

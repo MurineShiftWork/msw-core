@@ -38,7 +38,7 @@ jobs:
         if: inputs.publish_only != true
         run: |
           uvx --from commitizen cz bump --yes || EXIT=$?
-          if [ "${EXIT:-0}" -eq 21 ]; then
+          if [ "${EXIT:-0}" -eq 21 ] || [ "${EXIT:-0}" -eq 6 ]; then
             echo "No bumpable commits since last tag — skipping."
             echo "skipped=true" >> "$GITHUB_OUTPUT"
             exit 0
