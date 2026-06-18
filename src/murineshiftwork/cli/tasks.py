@@ -8,8 +8,54 @@ from importlib.metadata import entry_points
 from pathlib import Path
 
 import yaml
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from murineshiftwork.logic.machine_config import resolve_config_dir
+
+# ---------------------------------------------------------------------------
+# Task YAML schema
+
+
+class TaskYamlSchema(BaseModel):
+    """Top-level structure expected in every task.yaml.
+
+    ``session_type`` and ``version`` drive the v4 session folder name.
+    Both are optional; missing values fall back to the task name and no
+    version suffix respectively, for backward compatibility with tasks
+    that pre-date v4.
+    """
+
+    session_type: str = ""
+    version: int = 0
+    default: dict = {}
+    mode: dict = {}
+
+    model_config = ConfigDict(extra="allow")
+
+
+def validate_task_yaml(task_name: str, data: dict) -> TaskYamlSchema:
+    """Validate task.yaml structure; return schema with defaults filled in.
+
+    Logs a debug message if ``session_type`` or ``version`` are absent so
+    that the gap is visible without being fatal (backward compat).
+    """
+    try:
+        schema = TaskYamlSchema(**data)
+    except ValidationError as exc:
+        logging.warning("task '%s' task.yaml has schema errors: %s", task_name, exc)
+        return TaskYamlSchema()
+    if not schema.session_type:
+        logging.debug(
+            "task '%s' task.yaml missing 'session_type'; session folder uses task name",
+            task_name,
+        )
+    if not schema.version:
+        logging.debug(
+            "task '%s' task.yaml missing 'version'; no version suffix on session folder",
+            task_name,
+        )
+    return schema
+
 
 # ---------------------------------------------------------------------------
 # Task discovery

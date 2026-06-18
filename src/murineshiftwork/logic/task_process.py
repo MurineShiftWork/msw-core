@@ -222,11 +222,15 @@ class TaskProcess:
         self.session_uuid = str(uuid.uuid4())
 
         self.task_name = self.task_in
+        _session_type = kwargs.get("session_type") or None
+        _session_version = kwargs.get("session_version") or None
         self.session_paths = generate_session_paths(
             basepath=Path(self.out_path),
             subject=self.subject,
             task=self.task_name,
             linked_to=linked_to,
+            session_type=_session_type,
+            acq_version=_session_version,
         )
         self.input_kwargs["task_name"] = self.task_name
         self.input_kwargs["session_paths"] = self.session_paths
