@@ -16,6 +16,7 @@ from murineshiftwork.cli.tasks import (
     find_task_by_name,
     list_available_tasks,
     load_task_module,
+    validate_task_yaml,
 )
 from murineshiftwork.logic.config import (
     ExecutionConfig,
@@ -163,6 +164,12 @@ def _evaluate_and_load_configs(args_dict=None):
         args_dict["settings.stage"] = {}
 
     args_dict["settings.task.default"] = settings_task_default
+
+    # Extract session_type and version from bundled task.yaml (task metadata,
+    # not runtime settings).  Falls back to task name / 0 if absent.
+    _task_schema = validate_task_yaml(args_dict.get("task", ""), settings_task_default)
+    args_dict["session_type"] = _task_schema.session_type or args_dict.get("task", "")
+    args_dict["session_version"] = _task_schema.version
 
     args_dict["setup_config"] = load_setup_config(
         config_dir=args_dict["config_dir"],
