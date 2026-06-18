@@ -135,7 +135,6 @@ class FlirBonsaiClient:
 
     def __init__(self, config: CameraConfig, output_dir: str) -> None:
         self._config = config
-        self._output_dir = output_dir
         self._acqdir: str = ""
         self._basename: str = ""
         self._runner: Any = None
@@ -206,7 +205,7 @@ class FlirBonsaiClient:
         if self._runner is None:
             return
         self._runner.stop(timeout=5.0)
-        for runner in self._runner._runners:
+        for runner in self._runner:
             rc = runner.wait(timeout=10.0)
             if rc is None:
                 log.warning(
