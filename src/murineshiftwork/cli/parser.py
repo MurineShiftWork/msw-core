@@ -35,7 +35,7 @@ except Exception:
 # Appended to every subparser epilog so the credit line appears on all --help pages.
 _CREDIT_EPILOG = (
     f"\nmsw {_MSW_VERSION} | © Lars B. Rollik | PolyForm Internal Use 1.0.0\n"
-    "Source: https://github.com/larsrollik/murineshiftwork\n\n"
+    "Source: https://github.com/MurineShiftWork/murineshiftwork\n\n"
 )
 
 
