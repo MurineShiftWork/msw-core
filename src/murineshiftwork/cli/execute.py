@@ -81,7 +81,7 @@ def run_task(**args_dict):
     suppress_third_party_console_handlers()  # catch handlers added at import time
     _apply_stage_position(args_dict)
     task_name = args_dict["task"]
-    mod = importlib.import_module(f"murineshiftwork.tasks.{task_name}.{task_name}")
+    mod = importlib.import_module(f"murineshiftwork.tasks.{task_name}.task")
 
     serial_port = args_dict.get("serial_port_bpod", "")
     if serial_port and not args_dict.get("simulate") and not args_dict.get("bpod"):
