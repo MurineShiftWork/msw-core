@@ -1,4 +1,6 @@
 import logging
+import platform
+import threading
 
 import numpy as np
 
@@ -20,15 +22,29 @@ def get_sample_rate(target_device_name=None):
     return None
 
 
-def find_sound_device(target_device=None, return_first=True):
+def find_sound_device(target_device=None, return_first=True, prefer_wasapi=True):
     import sounddevice as sd
 
     devices = sd.query_devices()
 
-    found_device = [(i, d) for i, d in enumerate(devices) if target_device in d["name"]]
-    if len(found_device) > 0 and return_first:
-        found_device = found_device[0]
-    return found_device
+    matches = [(i, d) for i, d in enumerate(devices) if target_device in d["name"]]
+    # On Windows the same physical device is enumerated under several host APIs;
+    # PortAudio lists MME first, which has high (~100 ms) latency. Prefer the
+    # WASAPI instance so playback latency is low (closer to ASIO / PsychToolbox).
+    if matches and prefer_wasapi and platform.system() == "Windows":
+        hostapis = sd.query_hostapis()
+        wasapi_idx = next(
+            (i for i, h in enumerate(hostapis) if "WASAPI" in h.get("name", "")), None
+        )
+        if wasapi_idx is not None:
+            wasapi_matches = [
+                (i, d) for i, d in matches if d.get("hostapi") == wasapi_idx
+            ]
+            if wasapi_matches:
+                matches = wasapi_matches
+    if len(matches) > 0 and return_first:
+        return matches[0]
+    return matches
 
 
 class StereoSound:
@@ -53,6 +69,15 @@ class StereoSound:
 
         # Instance-level sounds dict (not class-level: avoid cross-instance sharing)
         self._sounds: dict = {}
+
+        # Persistent low-latency output stream (set up in setup_sound_device).
+        # Kept open so playback does not pay per-sound stream-open cost, which is
+        # the dominant poke->sound delay on Windows. _play_buffer is the sound the
+        # callback is currently streaming; swapping it is how a sound is triggered.
+        self._stream = None
+        self._play_lock = threading.Lock()
+        self._play_buffer: np.ndarray | None = None
+        self._play_pos = 0
 
         found_input_device = (
             find_sound_device(target_device=sound_device)
@@ -126,14 +151,93 @@ class StereoSound:
     def sounds(self, new_sounds: dict):
         self._sounds = new_sounds
 
+    def _wasapi_extra_settings(self):
+        """WASAPI exclusive-mode settings on Windows (lowest latency), else None.
+
+        Exclusive mode bypasses the Windows audio mixer - the main remaining
+        latency source after host-API selection. Returns None on non-Windows or
+        if WASAPI settings are unavailable, so the stream falls back to shared.
+        """
+        if platform.system() != "Windows":
+            return None
+        import sounddevice as sd
+
+        try:
+            return sd.WasapiSettings(exclusive=True)
+        except Exception as exc:  # WASAPI not present / device not exclusive-capable
+            logging.debug("WASAPI exclusive settings unavailable: %s", exc)
+            return None
+
+    def _audio_callback(self, outdata, frames, time_info, status):
+        """Stream callback: emit the current sound buffer, else silence.
+
+        Triggering a sound is just swapping self._play_buffer; the already-running
+        stream picks it up within one block, so playback latency is ~one block.
+        """
+        if status:
+            logging.debug("Sound stream status: %s", status)
+        with self._play_lock:
+            buf = self._play_buffer
+            pos = self._play_pos
+            if buf is None:
+                outdata[:] = 0
+                return
+            end = pos + frames
+            chunk = buf[pos:end]
+            n = len(chunk)
+            outdata[:n] = chunk
+            if n < frames:
+                outdata[n:] = 0
+            if end >= len(buf):
+                self._play_buffer = None
+                self._play_pos = 0
+            else:
+                self._play_pos = end
+
     def setup_sound_device(self):
-        """Set sounddevice global defaults for this device."""
+        """Set sounddevice defaults and open a persistent low-latency stream."""
         import sounddevice as sd
 
         sd.default.device = self._device_id
         sd.default.latency = self.default_sound_latency
         sd.default.channels = self.default_sound_channels
         sd.default.samplerate = self.sample_rate
+
+        # Open one stream and keep it running, so a sound trigger only swaps the
+        # buffer (no per-sound stream open/start, the main Windows latency cost).
+        # Fall back to per-call sd.play() if the stream cannot be opened.
+        try:
+            self._stream = sd.OutputStream(
+                samplerate=self.sample_rate,
+                channels=self.default_sound_channels,
+                device=self._device_id,
+                latency=self.default_sound_latency,
+                dtype="float32",
+                callback=self._audio_callback,
+                extra_settings=self._wasapi_extra_settings(),
+            )
+            self._stream.start()
+            logging.info(
+                "StereoSound: persistent output stream open (latency~%.1f ms)",
+                self._stream.latency * 1000,
+            )
+        except Exception as exc:
+            logging.warning(
+                "StereoSound: persistent stream unavailable (%s); using sd.play()",
+                exc,
+            )
+            self._stream = None
+
+    def close(self):
+        """Stop and close the persistent stream (releases an exclusive device)."""
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception as exc:
+                logging.debug("StereoSound stream close error: %s", exc)
+            finally:
+                self._stream = None
 
     def _make_bup(self, amplitude: float) -> np.ndarray:
         """Single 5 ms broadband bup matching the MATLAB singlebup defaults.
@@ -246,15 +350,33 @@ class StereoSound:
 
         if sound_code in self.sounds:
             logging.debug(f"Playing sound # {sound_code}.")
-            sd.play(
-                self.sounds[sound_code]["sound"],
-                self.sample_rate,
-                device=self._device_id,
-                blocking=self.sounds[sound_code]["play_blocking"],
+            buf = np.ascontiguousarray(
+                self.sounds[sound_code]["sound"], dtype="float32"
             )
+            if self._stream is not None:
+                # Hand the buffer to the running stream (low-latency path).
+                with self._play_lock:
+                    self._play_buffer = buf
+                    self._play_pos = 0
+                if self.sounds[sound_code]["play_blocking"]:
+                    import time as _time
+
+                    _time.sleep(len(buf) / self.sample_rate)
+            else:
+                sd.play(
+                    buf,
+                    self.sample_rate,
+                    device=self._device_id,
+                    blocking=self.sounds[sound_code]["play_blocking"],
+                )
         elif sound_code == self.sound_stop_code:
             logging.debug("Stopped current sound.")
-            sd.stop()
+            if self._stream is not None:
+                with self._play_lock:
+                    self._play_buffer = None
+                    self._play_pos = 0
+            else:
+                sd.stop()
         else:
             msg = f"No such sound index: {sound_code}"
             if raise_errors:
