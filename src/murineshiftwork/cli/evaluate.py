@@ -165,11 +165,17 @@ def _evaluate_and_load_configs(args_dict=None):
 
     args_dict["settings.task.default"] = settings_task_default
 
-    # Extract session_type and version from bundled task.yaml (task metadata,
-    # not runtime settings).  Falls back to task name / 0 if absent.
-    _task_schema = validate_task_yaml(args_dict.get("task", ""), settings_task_default)
+    # Extract session_type and version from the raw bundled task.yaml.
+    # read_config() strips top-level keys (returning only default:), so we
+    # re-read the file directly here to get session_type and version.
+    _raw_task_yaml: dict = {}
+    _task_yaml_file = args_dict.get("config_file_task", "")
+    if _task_yaml_file and Path(_task_yaml_file).exists():
+        with Path(_task_yaml_file).open() as _f:
+            _raw_task_yaml = yaml.safe_load(_f) or {}
+    _task_schema = validate_task_yaml(args_dict.get("task", ""), _raw_task_yaml)
     args_dict["session_type"] = _task_schema.session_type or args_dict.get("task", "")
-    args_dict["session_version"] = _task_schema.version
+    args_dict["session_version"] = _task_schema.version or None
 
     args_dict["setup_config"] = load_setup_config(
         config_dir=args_dict["config_dir"],
