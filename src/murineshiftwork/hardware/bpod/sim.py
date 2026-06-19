@@ -63,6 +63,53 @@ def _build_sim_hardware():
     return h
 
 
+class _SimTrial:
+    """A synthetic pybpodapi trial whose export() mirrors a real trial dict.
+
+    All states in the sent state machine are marked visited with sequential
+    [enter, exit] windows starting at ``start``; events are left empty.
+    """
+
+    _STATE_DURATION = 0.1
+
+    def __init__(self, sma, start: float = 0.0) -> None:
+        self._state_names = list(getattr(sma, "state_names", []) or [])
+        self._start = start
+        t = start
+        self._states: dict[str, list] = {}
+        for name in self._state_names:
+            self._states[name] = [[round(t, 6), round(t + self._STATE_DURATION, 6)]]
+            t += self._STATE_DURATION
+        self._end = t
+
+    @property
+    def duration(self) -> float:
+        return self._end - self._start
+
+    def export(self) -> dict:
+        return {
+            "Bpod start timestamp": 0.0,
+            "Trial start timestamp": round(self._start, 6),
+            "Trial end timestamp": round(self._end, 6),
+            "States timestamps": self._states,
+            "Events timestamps": {},
+        }
+
+
+class _SimSession:
+    """Minimal stand-in for pybpodapi's Session: tracks the current trial."""
+
+    def __init__(self) -> None:
+        self.trials: list = []
+        self.current_trial: _SimTrial | None = None
+        self.clock = 0.0
+
+    def add_trial(self, trial: _SimTrial) -> None:
+        self.trials.append(trial)
+        self.current_trial = trial
+        self.clock = trial._end
+
+
 class SimBpod:
     """Simulated BpodFactory: logs all interactions, returns success.
 
@@ -71,9 +118,21 @@ class SimBpod:
     """
 
     def __init__(self, **kwargs) -> None:
+        from pybpodapi.protocol import Bpod
+
         self.calls: list = []
         self._softcode_handler = None
         self.hardware = _build_sim_hardware()
+        self.session = _SimSession()
+        # Expose the static channel/event enums that tasks read off the bpod
+        # handle (e.g. self.bpod.OutputChannels.BNC1, self.bpod.Events.Tup).
+        # These are class-level constants on pybpodapi's Bpod, available
+        # without a serial connection; mirroring them keeps tasks
+        # hardware-agnostic between SimBpod and the real BpodFactory.
+        self.OutputChannels = Bpod.OutputChannels
+        self.Events = Bpod.Events
+        self.ChannelTypes = Bpod.ChannelTypes
+        self.ChannelNames = Bpod.ChannelNames
 
     # Context manager
 
@@ -117,6 +176,13 @@ class SimBpod:
     def run_state_machine(self, sma) -> bool:
         logging.debug("[SIM] Bpod.run_state_machine() → True")
         self.calls.append(("run_state_machine", sma))
+        # Populate session.current_trial so tasks that call
+        # self.bpod.session.current_trial.export() get a parseable trial. Every
+        # state in the sent state machine is marked visited with a sequential
+        # [enter, exit] window; events are left empty. This is behaviourally
+        # neutral but structurally faithful, enough to exercise task data
+        # pipelines end-to-end without hardware.
+        self.session.add_trial(_SimTrial(sma, start=self.session.clock))
         return True
 
     # Firmware override
