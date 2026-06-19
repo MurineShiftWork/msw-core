@@ -88,14 +88,17 @@ class BpodFactory:
                 hw = self._bpod._hardware
                 fw = getattr(hw, "firmware_version", "?")
                 mt = getattr(hw, "machine_type", None)
-                machine_names = {1: "r0.5", 2: "r0.7", 3: "r2.0", 4: "r2+"}
-                machine = machine_names.get(mt, f"type={mt}")
+                n_ports = self._behavior_port_count(self._bpod)
+                # machine_type alone does not disambiguate board model (e.g. mt=2
+                # is reported by both the 4-port r0.7 and the 8-port r1.0); the
+                # behaviour-port count from the descriptor is authoritative.
                 logging.info(
-                    "Bpod connected on %s | %s | fw %s | %s",
+                    "Bpod connected on %s | %s | fw %s | machine_type=%s | %d behaviour ports",
                     self.serial_port,
                     self._port_config,
                     fw,
-                    machine,
+                    mt,
+                    n_ports,
                 )
                 return
             except Exception as exc:
@@ -161,39 +164,21 @@ class BpodFactory:
         except Exception:
             pass
 
-    def _create_bpod_object(self):
-        """Create and connect pybpodapi Bpod, auto-detecting 4 vs 8 port config.
+    @staticmethod
+    def _behavior_port_count(bpod) -> int:
+        """Number of behaviour ports ('P' channels) in the connected device's
+        hardware descriptor (read from the board during handshake)."""
+        hw = getattr(bpod, "_hardware", None)
+        inputs = getattr(hw, "inputs", None) or []
+        return sum(1 for ch in inputs if ch == "P")
 
-        IndexError from _bpodcom_enable_ports means the port-count setting
-        doesn't match the hardware: immediately switch to 8-port settings.
-        All other exceptions are propagated to open() which handles retry.
-        """
+    def _open_bpod(self, settings: str):
+        """Apply a pybpodapi settings module and open a Bpod on the serial port."""
         from confapp import conf
         from pybpodapi import protocol as bpod_protocol
 
-        conf += self._SETTINGS_STANDARD
+        conf += settings
         importlib.reload(bpod_protocol)
-
-        partial = None
-        try:
-            partial = bpod_protocol.Bpod(
-                serial_port=self.serial_port,
-                workspace_path=self.workspace_path,
-                session_name=self.session_name,
-                **self._bpod_kwargs,
-            )
-            logging.getLogger("pybpodapi").setLevel(logging.WARNING)
-            self._port_config = "4-port"
-            return partial
-        except IndexError:
-            self._close_partial(partial)
-            logging.info(
-                "4-port config mismatch (IndexError): retrying with 8-port settings"
-            )
-
-        conf += self._SETTINGS_8PORT
-        importlib.reload(bpod_protocol)
-
         bpod = bpod_protocol.Bpod(
             serial_port=self.serial_port,
             workspace_path=self.workspace_path,
@@ -201,5 +186,40 @@ class BpodFactory:
             **self._bpod_kwargs,
         )
         logging.getLogger("pybpodapi").setLevel(logging.WARNING)
+        return bpod
+
+    def _create_bpod_object(self):
+        """Connect a pybpodapi Bpod, detecting 4- vs 8-port from the device.
+
+        The board model is determined from the hardware descriptor the device
+        reports during handshake, not assumed from the settings module. We open
+        with standard (4-port) settings, then:
+
+        - if the descriptor reports more than 4 behaviour ports, re-open with
+          8-port settings so the wired ports are enabled correctly (a 4-port
+          settings module can open an 8-port board without error but only
+          under-configures it - this is the case that previously logged a
+          spurious "4-port"); or
+        - if enabling the 4-port wired ports overruns the descriptor
+          (IndexError), switch to 8-port settings.
+
+        All other exceptions propagate to open() which handles retry/settle.
+        """
+        partial = None
+        try:
+            partial = self._open_bpod(self._SETTINGS_STANDARD)
+            if self._behavior_port_count(partial) <= 4:
+                self._port_config = "4-port"
+                return partial
+            logging.info(
+                "Device reports >4 behaviour ports: switching to 8-port settings"
+            )
+        except IndexError:
+            logging.info(
+                "4-port config mismatch (IndexError): switching to 8-port settings"
+            )
+
+        self._close_partial(partial)
+        bpod = self._open_bpod(self._SETTINGS_8PORT)
         self._port_config = "8-port"
         return bpod
