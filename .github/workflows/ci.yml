@@ -56,6 +56,29 @@ jobs:
       - name: Run tests
         run: uv run pytest
 
+  # Trial: observe whether the dep stack installs and tests pass on Windows.
+  # continue-on-error and excluded from the `ci` gate so it never blocks a PR;
+  # promote into the main matrix once it is reliably green.
+  test-windows-trial:
+    name: Test (windows trial, Python 3.13)
+    runs-on: windows-latest
+    if: github.event_name == 'pull_request'
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Run tests
+        run: uv run pytest
+
   ci:
     name: CI
     runs-on: ubuntu-latest
