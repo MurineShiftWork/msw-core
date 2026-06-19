@@ -78,6 +78,17 @@ def _add_session_args(parser):
         ),
     )
     g.add_argument(
+        "--session-type",
+        dest="session_type",
+        type=str,
+        default="",
+        help=(
+            "Optional label for the session container "
+            "(subject__datetime__SESSION_TYPE). Omitted by default, giving a "
+            "bare subject__datetime container."
+        ),
+    )
+    g.add_argument(
         "--host",
         dest="host_flag",
         type=str,

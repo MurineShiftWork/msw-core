@@ -13,8 +13,8 @@ from typing import Any
 import yaml
 from murineshiftwork.namespace import msw_file
 from murineshiftwork.namespace.manifest import (
-    append_session_to_acquisition,
-    finalize_session_in_acquisition,
+    append_acquisition_to_session,
+    finalize_acquisition_in_session,
     init_acquisition_manifest,
     init_session_manifest,
 )
@@ -223,11 +223,16 @@ class TaskProcess:
 
         self.task_name = self.task_in
         _session_type = kwargs.get("session_type") or None
-        _session_version = kwargs.get("session_version") or None
+        # acq_type identifies the acquisition (task identity); falls back to the
+        # task name when task.yaml defines no session_type.
+        _acq_type = kwargs.get("acq_type") or self.task_name
+        # MSW writes a version by default; task.yaml may override it.
+        _session_version = kwargs.get("session_version") or 1
         self.session_paths = generate_session_paths(
             basepath=Path(self.out_path),
             subject=self.subject,
             task=self.task_name,
+            acq_type=_acq_type,
             linked_to=linked_to,
             session_type=_session_type,
             acq_version=_session_version,
@@ -245,12 +250,12 @@ class TaskProcess:
         if not test_path_is_writable(target_file) and not self.debug:
             raise PermissionError(f"Session files not writable at {str(target_file)}")
 
-        _acq_folder = Path(self.session_paths["session_folder"]).parent
-        init_acquisition_manifest(_acq_folder, self.session_paths["session_basename"])
-        append_session_to_acquisition(
-            _acq_folder, self.session_paths["session_basename"]
+        _container = Path(self.session_paths["session_folder"]).parent
+        init_session_manifest(_container, self.session_paths["host_session_name"])
+        append_acquisition_to_session(
+            _container, self.session_paths["session_basename"]
         )
-        init_session_manifest(
+        init_acquisition_manifest(
             self.session_paths["session_folder"], self.session_paths["session_basename"]
         )
 
@@ -331,9 +336,9 @@ class TaskProcess:
                 post_exc = exc
         status = "aborted" if exc_type is not None else "complete"
         if self.session_paths:
-            _acq_folder = Path(self.session_paths["session_folder"]).parent
-            finalize_session_in_acquisition(
-                _acq_folder, self.session_paths["session_basename"], status=status
+            _container = Path(self.session_paths["session_folder"]).parent
+            finalize_acquisition_in_session(
+                _container, self.session_paths["session_basename"], status=status
             )
         self.exit_safely()
         if post_exc is not None:
@@ -431,6 +436,15 @@ class TaskProcess:
                 "session_folder": str(self.session_paths.get("session_folder", "")),
                 "session_basename": self.session_paths.get("session_basename", ""),
                 "datetime": self.session_paths.get("datetime", ""),
+                # Namespace identity, written so the file is self-describing
+                # without depending on its directory name surviving intact.
+                "namespace_version": self.session_paths.get(
+                    "namespace_spec_version", ""
+                ),
+                "acq_type": self.session_paths.get("acq_type", ""),
+                "acq_version": self.session_paths.get("acq_version"),
+                "session_type": self.input_kwargs.get("session_type") or "",
+                "host_session_name": self.session_paths.get("host_session_name", ""),
             },
         }
         ps_info = self.input_kwargs.get("host_session_info")
@@ -457,20 +471,11 @@ class TaskProcess:
     def init_task(self):
         """Import specific Task and make self.task_runner Thread."""
         import shutil
-        from importlib.metadata import entry_points
+
+        from murineshiftwork.cli.tasks import load_task_module
 
         try:
-            eps = {ep.name: ep for ep in entry_points(group="msw.tasks")}
-            if self.task_name in eps:
-                import importlib
-
-                mod = importlib.import_module(eps[self.task_name].value)
-            else:
-                import importlib
-
-                mod = importlib.import_module(
-                    f"murineshiftwork.tasks.{self.task_name}.{self.task_name}"
-                )
+            mod = load_task_module(self.task_name)
             task_class = mod.Task
         except (ImportError, AttributeError) as exc:
             raise ImportError(

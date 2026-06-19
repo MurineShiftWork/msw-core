@@ -174,7 +174,12 @@ def _evaluate_and_load_configs(args_dict=None):
         with Path(_task_yaml_file).open() as _f:
             _raw_task_yaml = yaml.safe_load(_f) or {}
     _task_schema = validate_task_yaml(args_dict.get("task", ""), _raw_task_yaml)
-    args_dict["session_type"] = _task_schema.session_type or args_dict.get("task", "")
+    # acq_type: the acquisition identity (drives the acquisition dir name).
+    # Uses the task.yaml session_type when set, else the task name.
+    args_dict["acq_type"] = _task_schema.session_type or args_dict.get("task", "")
+    # session_type: the session-container label. Opt-in only (via --session-type);
+    # the container is a bare subject__datetime by default.
+    args_dict["session_type"] = args_dict.get("session_type") or ""
     args_dict["session_version"] = _task_schema.version or None
 
     args_dict["setup_config"] = load_setup_config(
