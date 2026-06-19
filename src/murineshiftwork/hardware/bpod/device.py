@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any
 
 from murineshiftwork.hardware.bpod.factory import BpodFactory
+from murineshiftwork.logic.misc import serial_port_present
 
 log = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ class BpodDevice:
     Satisfies hardware.manager.DeviceProtocol structurally (no inheritance).
     HardwareManager calls preflight → connect → [task] → disconnect.
 
-    preflight: checks serial port path exists on disk.
+    preflight: checks the serial port is present (cross-platform).
     connect:   creates BpodFactory and calls open() with retry.
     disconnect: calls close_safely(): idempotent, safe to call twice.
     handle:    returns the BpodFactory instance for injection into TaskProcess.
@@ -30,9 +30,9 @@ class BpodDevice:
 
     def preflight(self) -> None:
         log.debug("Bpod preflight: checking port %s", self._serial_port)
-        if not Path(self._serial_port).exists():
+        if not serial_port_present(self._serial_port):
             raise ValueError(f"Bpod serial port not accessible: {self._serial_port!r}")
-        log.debug("Bpod preflight: port exists")
+        log.debug("Bpod preflight: port present")
 
     def connect(self) -> None:
         self._factory = BpodFactory(

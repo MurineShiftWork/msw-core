@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from scipy.optimize import curve_fit as _scipy_curve_fit
+
+# Bare Linux serial device names (no /dev/ prefix) accepted in the `port` field.
+_BARE_TTY_RE = re.compile(r"tty(ACM|USB|S)\d+")
 
 # ---------------------------------------------------------------------------
 # Serial devices
@@ -14,14 +18,42 @@ from scipy.optimize import curve_fit as _scipy_curve_fit
 
 class SerialDevice(BaseModel):
     type: str
-    port_by_path: str
+    # Set exactly one of:
+    #   port         - direct serial port: "COM3" (Windows) or "/dev/ttyACM0"
+    #                  (Linux; a bare "ttyACM0"/"ttyUSB0" is also accepted and
+    #                  gets the /dev/ prefix). Returned without /dev resolution.
+    #   port_by_path - Linux /dev/serial/by-path suffix, resolved at runtime to
+    #                  the underlying /dev/ttyXXX. Linux only.
+    port: str = ""
+    port_by_path: str = ""
+
+    @model_validator(mode="after")
+    def _exactly_one_port_source(self) -> SerialDevice:
+        if bool(self.port) == bool(self.port_by_path):
+            raise ValueError(
+                f"{self.type!r} device: set exactly one of 'port' "
+                "(e.g. COM3 or /dev/ttyACM0) or 'port_by_path' (Linux by-path "
+                "suffix), not both and not neither."
+            )
+        return self
 
     def resolve_port(self) -> str:
-        """Resolve port_by_path → /dev/ttyXXX (Linux; raises ValueError if absent)."""
+        """Return the concrete serial port.
+
+        ``port`` is returned verbatim (no filesystem resolution) so Windows COM
+        ports work directly; a bare Linux tty name is given its ``/dev/`` prefix.
+        ``port_by_path`` is resolved via ``/dev/serial/by-path`` (Linux only);
+        on systems without that tree, set ``port`` instead.
+        """
+        if self.port:
+            if _BARE_TTY_RE.fullmatch(self.port):
+                return f"/dev/{self.port}"
+            return self.port
         p = Path(f"/dev/serial/by-path/{self.port_by_path}")
         if not p.exists():
             raise ValueError(
-                f"Serial device not found: /dev/serial/by-path/{self.port_by_path}"
+                f"Serial device not found: /dev/serial/by-path/{self.port_by_path}. "
+                "On Windows or other non-Linux systems set 'port' (e.g. COM3) instead."
             )
         return str(p.resolve())
 
