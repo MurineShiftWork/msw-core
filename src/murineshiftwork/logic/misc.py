@@ -1,7 +1,24 @@
+from pathlib import Path
 from pkgutil import iter_modules
 
 import numpy as np
 import serial
+
+
+def serial_port_present(port: str) -> bool:
+    """Best-effort, cross-platform existence check for a serial port.
+
+    POSIX device nodes (``/dev/...``) are checked on the filesystem so a missing
+    device fails fast. Other forms - Windows ``COM`` ports especially - cannot be
+    cheaply filesystem-checked, so this returns True and defers to the actual
+    open at connect time. Use this instead of ``Path(port).exists()`` in
+    preflight checks so COM ports are not falsely rejected.
+    """
+    if not port:
+        return False
+    if port.startswith("/dev/"):
+        return Path(port).exists()
+    return True
 
 
 def unpack_input_dict(overwrite_dict, default_dict):

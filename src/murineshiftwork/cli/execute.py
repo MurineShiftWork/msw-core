@@ -194,11 +194,19 @@ def run_setup(**args_dict):
             SetupConfig as _SetupConfig,
         )
 
+        # Platform-aware port field: Windows uses a direct COM port; Linux uses
+        # /dev/serial/by-path resolution (or a direct /dev/ttyACM0 via `port`).
+        if sys.platform.startswith("win"):
+            bpod_device = _BpodDevice(type="bpod", port="FILL_IN_COM_PORT")
+            port_hint = "device 'port' values (e.g. COM3)"
+        else:
+            bpod_device = _BpodDevice(type="bpod", port_by_path="FILL_IN_PORT_BY_PATH")
+            port_hint = (
+                "device 'port_by_path' values (or set 'port' for a direct /dev/ttyACM0)"
+            )
         skeleton = _SetupConfig(
             name=setup_name,
-            devices={
-                "bpod": _BpodDevice(type="bpod", port_by_path="FILL_IN_PORT_BY_PATH")
-            },
+            devices={"bpod": bpod_device},
         ).model_dump()
         with path.open("w") as f:
             yaml.dump(
@@ -209,7 +217,7 @@ def run_setup(**args_dict):
                 sort_keys=False,
             )
         print_box(
-            f"Created setup config skeleton: {path}\nEdit the file to fill in device port_by_path values."
+            f"Created setup config skeleton: {path}\nEdit the file to fill in {port_hint}."
         )
 
     elif subcommand == "list":
