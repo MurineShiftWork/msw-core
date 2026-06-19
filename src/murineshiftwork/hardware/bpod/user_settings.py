@@ -1,9 +1,15 @@
 import logging
+import tempfile
+from pathlib import Path
 
 SETTINGS_PRIORITY = 0
 
-APP_LOG_FILENAME = "/tmp/pybpod_gui.log"
-PYBPOD_API_LOG_FILE = "/tmp/pybpod_api.log"
+# Use the platform temp dir so the log paths are valid on Linux and Windows.
+# A hardcoded "/tmp/..." resolves to a nonexistent "D:\tmp\..." on Windows and
+# makes pybpodapi raise FileNotFoundError when it creates its log FileHandler.
+_LOG_DIR = Path(tempfile.gettempdir())
+APP_LOG_FILENAME = str(_LOG_DIR / "pybpod_gui.log")
+PYBPOD_API_LOG_FILE = str(_LOG_DIR / "pybpod_api.log")
 # Setting log levels here, but msw.__init__ log overwrite takes precedence
 APP_LOG_HANDLER_CONSOLE_LEVEL = logging.WARNING
 APP_LOG_HANDLER_FILE_LEVEL = logging.WARNING

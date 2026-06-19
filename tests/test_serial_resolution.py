@@ -5,6 +5,8 @@ by-path) split, bare-tty normalisation, the exactly-one validation, and the
 platform-agnostic serial_port_present() preflight helper.
 """
 
+import sys
+
 import pytest
 from pydantic import ValidationError
 
@@ -73,6 +75,7 @@ def test_typed_subclass_accepts_direct_port():
 # serial_port_present()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="/dev/* nodes are POSIX-only")
 def test_present_true_for_existing_dev_node():
     assert serial_port_present("/dev/null") is True
 
