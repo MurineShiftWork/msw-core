@@ -36,27 +36,15 @@ def run_cli(*args):
 
     args_dict = parse_args(args=args)
 
-    # These subcommands bypass evaluate_args (no hardware/subject/task context needed)
-    if args_dict.get("command") in (
-        "init",
-        "setup",
-        "subject",
-        "calibration",
-        "action",
-        "tasks",
-        "post",
-    ):
-        args_dict["func"](**args_dict)
-        logging.debug("EXITING CLI.")
-        return
-
+    # Only `run` needs the hardware/subject/task context built by evaluate_args.
+    # All other commands - built-ins (init, setup, ...) and plugin subcommands
+    # registered via the msw.cli entry-point group (e.g. `oe`) - dispatch
+    # directly, so they must not be forced through run-task arg evaluation.
     if args_dict.get("command") == "run":
         _print_run_banner()
-
-    args_dict = evaluate_args(args_dict=args_dict)
-
-    if "exit_flag" in args_dict:
-        return
+        args_dict = evaluate_args(args_dict=args_dict)
+        if "exit_flag" in args_dict:
+            return
 
     # Call module
     args_dict["func"](**args_dict)

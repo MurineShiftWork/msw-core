@@ -78,3 +78,23 @@ def test_tasks_list_runs_without_error(capsys):
 
     run_tasks_list()
     assert isinstance(capsys.readouterr().out, str)
+
+
+def test_non_run_command_bypasses_evaluate_args(monkeypatch):
+    # Regression: plugin/non-run commands (e.g. `oe`) must dispatch directly and
+    # not be forced through run-task evaluate_args, which requires run-only keys
+    # like log_level. A parsed command lacking those must still reach its func.
+    import murineshiftwork.cli as cli_mod
+
+    called = {}
+
+    def _fake_parse_args(args=None):
+        return {"command": "oe", "func": lambda **kw: called.setdefault("ok", True)}
+
+    def _boom(**kwargs):  # evaluate_args must not run for non-run commands
+        raise AssertionError("evaluate_args should not be called for non-run command")
+
+    monkeypatch.setattr(cli_mod, "parse_args", _fake_parse_args)
+    monkeypatch.setattr(cli_mod, "evaluate_args", _boom)
+    cli_mod.run_cli(["oe", "status"])
+    assert called.get("ok") is True
