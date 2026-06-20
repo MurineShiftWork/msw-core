@@ -252,6 +252,26 @@ def _inject_valve_calibration(setup_config, patched) -> None:
 
     cal = setup_config.calibrations.bpod_valve
 
+    # Task-time override: `-ts FIT_MODEL=linear` (or exponential) switches the
+    # calibration fit model for this session without editing the setup YAML.
+    fit_model_override = patched.get("FIT_MODEL")
+    if fit_model_override is not None and fit_model_override not in (
+        "exponential",
+        "linear",
+    ):
+        logging.warning(
+            "Ignoring -ts FIT_MODEL=%r: expected 'exponential' or 'linear'",
+            fit_model_override,
+        )
+        fit_model_override = None
+    if fit_model_override is not None:
+        for vc in cal.values():
+            vc.fit_model = fit_model_override
+        logging.info(
+            "Valve calibration fit_model overridden to %r via -ts FIT_MODEL",
+            fit_model_override,
+        )
+
     if not cal:
         logging.warning(
             "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"
@@ -261,7 +281,11 @@ def _inject_valve_calibration(setup_config, patched) -> None:
             "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
             setup_config.name,
         )
-        fallback = _FALLBACK_VALVE_CALIBRATION
+        # Copy the module-level fallback so a FIT_MODEL override does not leak
+        # into later sessions sharing the same process.
+        fallback = _FALLBACK_VALVE_CALIBRATION.model_copy()
+        if fit_model_override is not None:
+            fallback.fit_model = fit_model_override
         patched["valve_s_for_ul"] = lambda vol, port=None: fallback.s_for_ul(vol)
         return
 

@@ -83,10 +83,17 @@ def update_valve_calibration(
     with path.open() as f:
         raw = yaml.safe_load(f) or {}
 
-    raw.setdefault("calibrations", {}).setdefault("bpod_valve", {})[str(valve_id)] = {
+    valve_entry: dict = {
         "updated": new_calibration.updated,
         "points": new_calibration.points,
     }
+    # Only persist a non-default fit_model so existing exponential setups round-trip
+    # unchanged and no surprise key appears in their YAML.
+    if new_calibration.fit_model != "exponential":
+        valve_entry["fit_model"] = new_calibration.fit_model
+    raw.setdefault("calibrations", {}).setdefault("bpod_valve", {})[str(valve_id)] = (
+        valve_entry
+    )
 
     with path.open("w") as f:
         yaml.dump(raw, f, **_YAML_DUMP_KWARGS)
