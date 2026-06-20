@@ -312,8 +312,7 @@ class ValveCalibration(BaseModel):
             )
 
         params_str = ", ".join(
-            f"{name}={val:.5f}"
-            for name, val in zip("abc", params, strict=False)
+            f"{name}={val:.5f}" for name, val in zip("abc", params, strict=False)
         )
         return True, f"ok ({self.fit_model}, R-squared = {r2:.3f}, {params_str})"
 

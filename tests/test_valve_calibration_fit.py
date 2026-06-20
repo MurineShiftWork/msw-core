@@ -146,7 +146,9 @@ def test_setup_config_round_trips_fit_model():
     cfg = SetupConfig(
         name="rig_test",
         calibrations=Calibrations(
-            bpod_valve={"1": ValveCalibration(points=_LINEAR_POINTS, fit_model="linear")},
+            bpod_valve={
+                "1": ValveCalibration(points=_LINEAR_POINTS, fit_model="linear")
+            },
         ),
     )
     data = cfg.model_dump()
