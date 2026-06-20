@@ -1,0 +1,106 @@
+---
+name: rig_fixture
+devices:
+  bpod:
+    type: bpod
+    port_by_path: pci-0000:00:00.0-usb-0:0:0.0
+  stage:
+    type: stage_tower
+    port_by_path: pci-0000:00:00.0-usb-0:0:1.0-port0
+    axes:
+      x:
+        id: 11
+        position_min: 90
+        position_max: 660
+        velocity_max: 0
+        operating_mode: OP_POSITION
+      y:
+        id: 12
+        position_min: 430
+        position_max: 930
+        velocity_max: 0
+        operating_mode: OP_POSITION
+      z:
+        id: 13
+        position_min: 235
+        position_max: 510
+        velocity_max: 0
+        operating_mode: OP_POSITION
+    known_positions:
+      back:
+        y:
+          position_raw: 850
+  scale:
+    type: scale
+    scale_type: bench
+    baudrate: 9600
+    port_by_path: pci-0000:00:00.0-usb-0:0:2.0-port0
+cameras:
+  backend: rce
+  config: /data/msw_configs/device_configs/cameras/rig_fixture.cameras.yaml
+calibrations:
+  bpod_valve:
+    '1':
+      updated: '2026-01-15T10:00:00'
+      points:
+      - - 0.0122
+        - 0.566
+      - - 0.0581
+        - 4.0
+      - - 0.0811
+        - 6.038
+      - - 0.0926
+        - 6.917
+      - - 0.1041
+        - 7.562
+      - - 0.1155
+        - 8.86
+      - - 0.127
+        - 9.627
+      - - 0.1385
+        - 10.82
+      - - 0.15
+        - 12.25
+    '2':
+      updated: '2026-01-15T10:30:00'
+      points:
+      - - 0.0114
+        - 0.824
+      - - 0.0807
+        - 6.528
+      - - 0.0922
+        - 6.563
+      - - 0.1038
+        - 8.017
+      - - 0.1153
+        - 8.755
+      - - 0.1269
+        - 9.196
+      - - 0.1384
+        - 10.08
+      - - 0.15
+        - 13.142
+    '3':
+      updated: '2026-01-15T11:00:00'
+      points:
+      - - 0.0123
+        - 0.536
+      - - 0.0811
+        - 5.658
+      - - 0.0926
+        - 6.395
+      - - 0.1041
+        - 7.833
+      - - 0.1155
+        - 8.458
+      - - 0.127
+        - 9.717
+      - - 0.1385
+        - 10.08
+      - - 0.15
+        - 12.154
+  stale_days: 180
+hooks:
+  pre_task: []
+  post_task: []
+open_ephys_url: ''

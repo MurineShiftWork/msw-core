@@ -55,14 +55,14 @@ def test_linear_fit_recovers_slope_and_intercept():
 
 def test_linear_validate_passes_on_linear_data():
     vc = ValveCalibration(points=_LINEAR_POINTS, fit_model="linear")
-    is_valid, reason = vc.validate()
+    is_valid, reason = vc.check_quality()
     assert is_valid, reason
     assert "linear" in reason
 
 
 def test_exponential_validate_passes_on_exponential_data():
     vc = ValveCalibration(points=_EXP_POINTS, fit_model="exponential")
-    is_valid, reason = vc.validate()
+    is_valid, reason = vc.check_quality()
     assert is_valid, reason
     assert "exponential" in reason
 
