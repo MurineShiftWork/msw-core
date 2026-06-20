@@ -26,6 +26,23 @@ def test_sim_exposes_channel_and_event_enums():
     assert hasattr(b.ChannelNames, "VALVE")
 
 
+def test_sim_supports_eight_behaviour_ports():
+    """8-port events (e.g. Port6In/Port8In, used by sequence) are valid on the sim."""
+    from pybpodapi.protocol import Bpod, StateMachine
+
+    b = _sim()
+    sma = StateMachine(bpod=b)
+    # Would raise SMAError "PortNIn is an invalid event name" on a 4-port sim.
+    sma.add_state(
+        state_name="wait_poke",
+        state_timer=0.1,
+        state_change_conditions={"Port6In": "exit", "Port8In": "exit"},
+        output_actions=[(Bpod.OutputChannels.PWM8, 255)],
+    )
+    b.send_state_machine(sma)
+    assert b.run_state_machine(sma) is True
+
+
 def test_sim_session_export_has_trial_dict_shape():
     from pybpodapi.protocol import Bpod, StateMachine
 

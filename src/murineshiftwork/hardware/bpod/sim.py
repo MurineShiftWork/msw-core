@@ -23,10 +23,12 @@ import logging
 
 
 def _build_sim_hardware():
-    """Return a pre-populated Hardware matching a standard 4-port Bpod.
+    """Return a pre-populated Hardware matching a standard 8-port Bpod.
 
-    Populated enough that StateMachine(bpod=...) and add_state() with Valve,
-    BNC, SoftCode, and Tup events all work without a serial connection.
+    Eight behaviour ports cover every bundled task (sequence uses ports up to
+    7), so tasks run end to end under --simulate. Populated enough that
+    StateMachine(bpod=...) and add_state() with Port/Valve/PWM, BNC, SoftCode,
+    and Tup events all work without a serial connection.
     """
     from pybpodapi.bpod.hardware.hardware import Hardware
 
@@ -37,27 +39,13 @@ def _build_sim_hardware():
     h.n_global_timers = 5
     h.max_serial_events = 15
     h.firmware_version = 22
-    h.machine_type = 1
+    h.machine_type = 2  # 8-port (state machine r2/r2+)
     h.cycle_period = 100
-    # 4 behavior ports (P), USB (X), 2 BNC (B), 2 Wire (W): no UART modules
-    h.inputs = ["X", "P", "P", "P", "P", "B", "B", "W", "W"]
+    # 8 behaviour ports (P), USB (X), 2 BNC (B), 2 Wire (W): no UART modules
+    h.inputs = ["X", *(["P"] * 8), "B", "B", "W", "W"]
     h.inputs_enabled = [1] * len(h.inputs)
-    # USB (X), 4 PWM ports (P), 4 Valves (V), 2 BNC (B), 2 Wire (W)
-    h.outputs = [
-        "X",
-        "P",
-        "P",
-        "P",
-        "P",
-        "V",
-        "V",
-        "V",
-        "V",
-        "B",
-        "B",
-        "W",
-        "W",
-    ]
+    # USB (X), 8 PWM ports (P), 8 Valves (V), 2 BNC (B), 2 Wire (W)
+    h.outputs = ["X", *(["P"] * 8), *(["V"] * 8), "B", "B", "W", "W"]
     h.n_uart_channels = 0
     h.setup(modules=[])
     return h
