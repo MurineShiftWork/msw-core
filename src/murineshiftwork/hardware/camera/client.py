@@ -33,6 +33,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from murineshiftwork.namespace import msw_file
+
 if TYPE_CHECKING:
     from murineshiftwork.logic.config.models import CameraConfig
 
@@ -108,8 +110,6 @@ class RceConductorAdapter:
 # ---------------------------------------------------------------------------
 # FLIR/Bonsai client
 
-_MSWFLIR_PREFIX = "mswflir"  # matches msw_flir_bonsai.MSWFLIR_PREFIX
-
 
 class FlirBonsaiClient:
     """Camera client for FLIR cameras driven by Bonsai subprocesses.
@@ -181,7 +181,10 @@ class FlirBonsaiClient:
                 if getattr(cam, "name", "")
                 else f"cam{cam.index}"
             )
-            cam_basename = f"{self._basename}.{_MSWFLIR_PREFIX}.{cam_label}"
+            # Per-camera artifact stem is a standard namespace .msw. artifact
+            # below the video_flir acquisition basename; the builder owns the
+            # naming (no hand-built prefix). flir just receives the ready stem.
+            cam_basename = msw_file(self._basename, cam_label).name
             runners.append(
                 BonsaiCameraRunner(
                     workflow=workflow,
