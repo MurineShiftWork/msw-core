@@ -34,11 +34,42 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from murineshiftwork.namespace import msw_file
+from murineshiftwork.namespace.manifest import (
+    append_acquisition_to_session,
+    finalize_acquisition_in_session,
+)
 
 if TYPE_CHECKING:
     from murineshiftwork.logic.config.models import CameraConfig
 
 log = logging.getLogger(__name__)
+
+
+def _register_camera_peer(acq_dir: str, basename: str) -> None:
+    """Register a camera acquisition as a peer in its session_manifest.yaml.
+
+    The camera acquisition dir sits inside the session container (built with
+    ``linked_to=<container>``), so the container is its parent. Registration is
+    best-effort: a manifest failure must never interrupt recording.
+    """
+    if not acq_dir or not basename:
+        return
+    try:
+        append_acquisition_to_session(Path(acq_dir).parent, basename)
+    except Exception:  # noqa: BLE001 - never let bookkeeping break acquisition
+        log.warning("could not register camera peer %s", basename, exc_info=True)
+
+
+def _finalize_camera_peer(
+    acq_dir: str, basename: str, status: str = "complete"
+) -> None:
+    """Mark a registered camera acquisition finished in session_manifest.yaml."""
+    if not acq_dir or not basename:
+        return
+    try:
+        finalize_acquisition_in_session(Path(acq_dir).parent, basename, status=status)
+    except Exception:  # noqa: BLE001
+        log.warning("could not finalize camera peer %s", basename, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -56,6 +87,8 @@ class RceConductorAdapter:
         self._ensemble_cfg_file = ensemble_cfg_file
         self._output_dir = output_dir
         self._conductor: Any = None
+        self._acq_dir: str = ""
+        self._basename: str = ""
 
     def start(self) -> None:
         from rpi_camera_ensemble.conductor.conductor import Conductor
@@ -78,6 +111,9 @@ class RceConductorAdapter:
     def initialize_acquisition(
         self, acquisition_path: str = "", acquisition_name: str = "", **_: Any
     ) -> None:
+        self._acq_dir = acquisition_path
+        self._basename = acquisition_name
+        _register_camera_peer(acquisition_path, acquisition_name)
         if self._conductor is not None:
             self._conductor.initialize_acquisition(
                 acquisition_path=acquisition_path,
@@ -95,6 +131,7 @@ class RceConductorAdapter:
     def stop_acquisition(self) -> None:
         if self._conductor is not None:
             self._conductor.stop_acquisition()
+        _finalize_camera_peer(self._acq_dir, self._basename)
 
     def stop(self) -> None:
         if self._conductor is not None:
@@ -154,6 +191,7 @@ class FlirBonsaiClient:
         self._acqdir = acqdir
         self._basename = basename
         log.debug(f"FlirBonsaiClient: acqdir={acqdir!r} basename={basename!r}")
+        _register_camera_peer(acqdir, basename)
 
     def start_preview(self) -> None:
         pass
@@ -205,15 +243,15 @@ class FlirBonsaiClient:
         self._runner.start()
 
     def stop_acquisition(self) -> None:
-        if self._runner is None:
-            return
-        self._runner.stop(timeout=5.0)
-        for runner in self._runner:
-            rc = runner.wait(timeout=10.0)
-            if rc is None:
-                log.warning(
-                    f"FlirBonsaiClient: cam{runner._cam_index} did not exit cleanly"
-                )
+        if self._runner is not None:
+            self._runner.stop(timeout=5.0)
+            for runner in self._runner:
+                rc = runner.wait(timeout=10.0)
+                if rc is None:
+                    log.warning(
+                        f"FlirBonsaiClient: cam{runner._cam_index} did not exit cleanly"
+                    )
+        _finalize_camera_peer(self._acqdir, self._basename)
 
     def stop(self) -> None:
         if self._runner is not None and self._runner.any_running:
