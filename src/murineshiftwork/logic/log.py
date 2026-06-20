@@ -17,11 +17,6 @@ _CENTRAL_LOG_DIR = Path("~/.murineshiftwork/logs").expanduser()
 _MAX_LOG_FILES = 100
 
 
-def get_default_log_file_path(path=None):
-    """Kept for backward compatibility: returns central log dir path."""
-    return str(_CENTRAL_LOG_DIR)
-
-
 def setup_logging(level=None, log_file=None, task="", subject="", setup=""):
     if level is None:
         level = "DEBUG"
@@ -127,13 +122,3 @@ def json_dumps_type_safe(data):
         indent=4,
         default=lambda x: f"<NoJSON:{type(x)}>",
     )
-
-
-def write_json(data=None, save_path=None):
-    try:
-        with Path(save_path).open("w") as f:
-            txt = json_dumps_type_safe(data)
-            f.write(txt)
-            return True
-    except BaseException:
-        return False

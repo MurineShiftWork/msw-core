@@ -46,12 +46,6 @@ class CalibrationData:
     def __str__(self):
         return str(self.calibration_data)
 
-    def make_output_dir(self):
-        if self.file_path is None:
-            return
-        if not self.file_path.parent.exists():
-            self.file_path.parent.mkdir(exist_ok=True, parents=True)
-
     def load(self, file_path=None):
         if file_path is not None:
             self.file_path = file_path
@@ -308,28 +302,6 @@ class CalibrationDataSound(CalibrationData):
 
 def _exponential_function(x, a, b, c):
     return a * np.exp(b * x) + c
-
-
-def fit_calibration_exp(x_observed=None, y_observed=None):
-    # x = np.linspace(0, 4, 50)
-    # y = _exponential_function(x, 2.5, 1.3, 0.5)
-    # yn = y + 0.2 * np.random.normal(size=len(x))
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", OptimizeWarning)
-        popt, pcov = curve_fit(_exponential_function, x_observed, y_observed)
-    return popt, pcov
-
-
-def evaluate_calibration_curve_continuous(popt=None, min=0, max=10, step=0.1):
-    x_continuous = np.linspace(min, max, int(max / step), endpoint=True)
-    y_continuous = _exponential_function(x_continuous, *popt)
-    return x_continuous, y_continuous
-
-
-def evaluate_calibration_curve_y_to_x(x_continuous, y_continuous, y_target=None):
-    x_value = np.interp(y_target, x_continuous, y_continuous)
-    return x_value
 
 
 def flag_outlier_points(
