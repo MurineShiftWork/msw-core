@@ -66,7 +66,7 @@ def update_valve_calibration(
             f"Create the file first or run: murineshiftwork register --setup {setup_name}"
         )
 
-    is_valid, reason = new_calibration.validate()
+    is_valid, reason = new_calibration.check_quality()
     if not is_valid:
         if force:
             logging.warning(
