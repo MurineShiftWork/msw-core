@@ -465,13 +465,6 @@ class Stimulation:
             self.pulsepal.stop_all_outputs()
             self.channels_currently_active = self.channels_inactive
 
-    def _check_channels_active_reset(self):
-        if (
-            abs(self.time_of_last_activation - time.time())
-            >= self.in_dict["reset_stimulation_after_sec"]
-        ):
-            self.channels_currently_active = self.channels_inactive
-
     def disconnect(self):
         if self.pulsepal is not None:
             try:
@@ -489,6 +482,9 @@ class Stimulation:
             if getattr(self, "_owns_connection", True):
                 self.pulsepal = None
         logging.info("PulsePal: disconnected.")
+
+    def __enter__(self):
+        return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.disconnect()
