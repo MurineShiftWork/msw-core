@@ -42,6 +42,17 @@ def find_sound_device(target_device=None, return_first=True, prefer_wasapi=True)
             ]
             if wasapi_matches:
                 matches = wasapi_matches
+    # When several outputs of one card match (e.g. analog + SPDIF), prefer a
+    # non-digital output so selection lands on the analog speaker rather than a
+    # digital passthrough (SPDIF). Pin an exact sound_device in config to override.
+    if len(matches) > 1:
+        analog = [
+            (i, d)
+            for i, d in matches
+            if not any(k in d["name"].upper() for k in ("SPDIF", "DIGITAL", "S/PDIF"))
+        ]
+        if analog:
+            matches = analog
     if len(matches) > 0 and return_first:
         return matches[0]
     return matches
@@ -53,6 +64,11 @@ class StereoSound:
     default_ttl_duration = 0.001  # 1 ms
     default_sound_channels = 2  # stereo
     default_sound_latency = "low"
+    # WASAPI exclusive mode bypasses the Windows mixer for the lowest latency,
+    # but it binds the device directly and can be silent on some outputs (it
+    # broke playback on a rig where shared-mode sd.play worked). Default to
+    # shared mode (robust, mixer-routed); opt in per rig with use_wasapi_exclusive=True.
+    use_wasapi_exclusive = False
 
     sound_stop_code = 99
 
@@ -152,12 +168,16 @@ class StereoSound:
         self._sounds = new_sounds
 
     def _wasapi_extra_settings(self):
-        """WASAPI exclusive-mode settings on Windows (lowest latency), else None.
+        """WASAPI exclusive-mode settings when opted in on Windows, else None.
 
-        Exclusive mode bypasses the Windows audio mixer - the main remaining
-        latency source after host-API selection. Returns None on non-Windows or
-        if WASAPI settings are unavailable, so the stream falls back to shared.
+        Exclusive mode bypasses the Windows audio mixer for the lowest latency,
+        but binds the device directly and can be silent on some outputs. It is
+        OFF by default (shared mode, mixer-routed, robust); enable per rig with
+        ``use_wasapi_exclusive=True``. Returns None on non-Windows, when not
+        opted in, or if WASAPI settings are unavailable (stream stays shared).
         """
+        if not self.use_wasapi_exclusive:
+            return None
         if platform.system() != "Windows":
             return None
         import sounddevice as sd
