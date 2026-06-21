@@ -19,7 +19,6 @@ from murineshiftwork.namespace.manifest import (
     init_session_manifest,
 )
 from murineshiftwork.namespace.paths import generate_session_paths
-from pybpodapi.protocol import Bpod, StateMachine
 
 from murineshiftwork.hardware.bpod import BpodFactory
 from murineshiftwork.hooks import (
@@ -128,35 +127,6 @@ class TaskRunner(Thread):
         return msw_file(
             self.input_kwargs["session_paths"]["session_file_path"], artifact
         )
-
-
-class ExampleTask(TaskRunner):
-    def run(self):
-        trial_index = 0
-        max_trials = 1500
-        while self.continue_task and trial_index < max_trials:
-            print(f"Trial {trial_index}")
-
-            sma = StateMachine(bpod=self.bpod)
-            sma.add_state(
-                state_name="test_state_1",
-                state_timer=20,
-                state_change_conditions={Bpod.Events.Tup: "test_state_2"},
-                output_actions=[],
-            )
-            sma.add_state(
-                state_name="test_state_2",
-                state_timer=1,
-                state_change_conditions={Bpod.Events.Tup: "exit"},
-                output_actions=[],
-            )
-            self.bpod.send_state_machine(sma)
-
-            if not self.bpod.run_state_machine(sma):
-                logging.warning("No data returned.")
-                break
-
-            trial_index += 1
 
 
 class TaskProcess:
