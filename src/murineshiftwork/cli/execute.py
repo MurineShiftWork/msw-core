@@ -263,7 +263,7 @@ def run_setup(**args_dict):
             yaml.dump(
                 raw, f, default_flow_style=False, allow_unicode=True, sort_keys=False
             )
-        print_box(f"Renamed setup '{setup_name}' → '{new_name}'.")
+        print_box(f"Renamed setup '{setup_name}' -> '{new_name}'.")
 
     else:
         raise ValueError(f"Unknown setup subcommand: {subcommand!r}")
@@ -352,7 +352,7 @@ def run_subject(**args_dict):
                 allow_unicode=True,
                 sort_keys=False,
             )
-        print_box(f"Renamed subject '{subject_name}' → '{new_name}'.")
+        print_box(f"Renamed subject '{subject_name}' -> '{new_name}'.")
 
     elif subcommand == "remove":
         subject_name = args_dict["subject"]

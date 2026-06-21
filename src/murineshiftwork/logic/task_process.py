@@ -354,7 +354,7 @@ class TaskProcess:
         )
         self._relay_proc.start()
         self.input_kwargs["relay_queue"] = self._relay_queue
-        logging.debug("LogAgent started → %s (setup=%r)", log_url, setup)
+        logging.debug("LogAgent started -> %s (setup=%r)", log_url, setup)
 
     def exit_safely(self):
         self.exiting = True
