@@ -162,7 +162,7 @@ class SimBpod:
         self.calls.append(("send_state_machine", sma))
 
     def run_state_machine(self, sma) -> bool:
-        logging.debug("[SIM] Bpod.run_state_machine() → True")
+        logging.debug("[SIM] Bpod.run_state_machine() -> True")
         self.calls.append(("run_state_machine", sma))
         # Populate session.current_trial so tasks that call
         # self.bpod.session.current_trial.export() get a parseable trial. Every

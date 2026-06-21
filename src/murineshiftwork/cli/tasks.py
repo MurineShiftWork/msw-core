@@ -286,4 +286,4 @@ def run_tasks_init_configs(tasks=None, config_dir="", force=False, **kwargs):
 
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(src, dst)
-        print(f"  wrote {resolved}  →  {dst}")
+        print(f"  wrote {resolved}  ->  {dst}")
