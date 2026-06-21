@@ -105,14 +105,6 @@ def generate_waveform_voltages(
 
 class Stimulation:
     pulsepal: Any = None
-    port = ""
-
-    # Size 4: one entry per output channel (0-indexed, matching pypulsepal).
-    channels_inactive = zeros(4).astype("int")
-    channels_stimulation = channels_inactive.copy()
-    channels_ttl_copy = channels_inactive.copy()
-
-    time_of_last_activation = 0
 
     _DEFAULT_IN_DICT: ClassVar[dict[str, Any]] = {
         "pulse_duration": 0.005,
@@ -127,13 +119,19 @@ class Stimulation:
     }
 
     in_dict: dict[str, Any]
-    test = 0
-    channels_currently_active: list[Any] = []
-    emergency_off_bool = False
 
     def __init__(self, port=None, in_dict: dict | None = None, test: bool = False):
         self.test = test
         self.port = port
+        # Per-instance mutable state (size 4: one entry per output channel,
+        # 0-indexed, matching pypulsepal). Kept off the class so separate
+        # Stimulation instances do not share the same arrays/list.
+        self.channels_inactive = zeros(4).astype("int")
+        self.channels_stimulation = self.channels_inactive.copy()
+        self.channels_ttl_copy = self.channels_inactive.copy()
+        self.channels_currently_active: list[Any] = []
+        self.time_of_last_activation = 0
+        self.emergency_off_bool = False
         self._channel_params: dict = {}
         self.in_dict = dict(self._DEFAULT_IN_DICT)
         for k, v in (in_dict or {}).items():
