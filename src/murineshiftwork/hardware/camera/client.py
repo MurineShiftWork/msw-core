@@ -111,9 +111,16 @@ class RceConductorAdapter:
     def initialize_acquisition(
         self, acquisition_path: str = "", acquisition_name: str = "", **_: Any
     ) -> None:
-        self._acq_dir = acquisition_path
+        # acquisition_path is relative to the data root: the remote RCE conductor
+        # needs it relative, but the local session_manifest.yaml must be written
+        # at the absolute container path. Resolve against output_dir (the data
+        # root) for bookkeeping so manifest writes don't depend on the CWD.
+        abs_acq_dir = (
+            str(Path(self._output_dir) / acquisition_path) if acquisition_path else ""
+        )
+        self._acq_dir = abs_acq_dir
         self._basename = acquisition_name
-        _register_camera_peer(acquisition_path, acquisition_name)
+        _register_camera_peer(abs_acq_dir, acquisition_name)
         if self._conductor is not None:
             self._conductor.initialize_acquisition(
                 acquisition_path=acquisition_path,
