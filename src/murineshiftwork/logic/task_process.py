@@ -5,6 +5,7 @@ import sys
 import time
 import uuid
 from datetime import UTC
+from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _get_version
 from pathlib import Path
 from threading import Thread
@@ -37,6 +38,21 @@ from murineshiftwork.logic.misc import (
     test_serial_port_is_accessible,
 )
 from murineshiftwork.logic.paths import test_path_is_writable
+
+
+def _resolve_msw_version() -> str:
+    """Best-effort MSW version for session metadata.
+
+    The umbrella distribution when it is installed (the full rig stack), else the
+    standalone msw-core distribution, else "unknown" - so it never raises when
+    msw-core runs without the umbrella (e.g. in msw-core's own tests).
+    """
+    for dist in ("murineshiftwork", "msw-core"):
+        try:
+            return _get_version(dist)
+        except PackageNotFoundError:
+            continue
+    return "unknown"
 
 
 def _get_git_commit() -> str:
@@ -395,7 +411,7 @@ class TaskProcess:
         data = {
             "msw_format_version": 2,
             "process": {
-                "msw_version": _get_version("murineshiftwork"),
+                "msw_version": _resolve_msw_version(),
                 "git_commit": _get_git_commit(),
                 "session_uuid": self.session_uuid,
                 "task": self.task_name,
