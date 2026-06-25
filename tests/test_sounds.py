@@ -59,6 +59,7 @@ def test_default_output_fallback_not_sysdefault(monkeypatch):
     fake_sd = types.SimpleNamespace(
         query_devices=lambda kind=None: out_dict,
         default=types.SimpleNamespace(device=(1, 3)),
+        check_output_settings=lambda **kw: None,
     )
     monkeypatch.setitem(sys.modules, "sounddevice", fake_sd)
     monkeypatch.setattr(
@@ -70,3 +71,27 @@ def test_default_output_fallback_not_sysdefault(monkeypatch):
     assert s.sound_device == (3, out_dict)  # a real device tuple, not "sysdefault"
     assert s._device_id == 3
     assert s.sample_rate == 48000
+
+
+def test_sample_rate_falls_back_when_device_rejects(monkeypatch):
+    """A device may be found but reject the configured rate (e.g. XONAR 192000
+    under WASAPI shared mode); fall back to its reported default rate."""
+    import sys
+    import types
+
+    dev = {"name": "Speakers (XONAR SOUND CARD)", "default_samplerate": 48000.0}
+
+    def _reject(**kwargs):
+        raise RuntimeError("Invalid sample rate [PaErrorCode -9997]")
+
+    fake_sd = types.SimpleNamespace(check_output_settings=_reject)
+    monkeypatch.setitem(sys.modules, "sounddevice", fake_sd)
+    monkeypatch.setattr(
+        "murineshiftwork.logic.sounds.find_sound_device", lambda **kw: (10, dev)
+    )
+
+    s = StereoSound(sound_device="XONAR SOUND CARD")
+
+    # name matched 192000 in sample_rate_dict, but the device rejects it -> 48000
+    assert s.sample_rate == 48000
+    assert s._device_id == 10
