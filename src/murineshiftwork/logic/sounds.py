@@ -292,8 +292,25 @@ class StereoSound:
                 extra_settings=self._wasapi_extra_settings(),
             )
             self._stream.start()
+            # Adopt the stream's ACTUAL negotiated rate: the device/host may open
+            # at a different rate than requested. Sounds are generated AFTER this
+            # (at self.sample_rate), so they must match the rate the stream truly
+            # runs at, or playback is the wrong speed (e.g. a 192000 buffer played
+            # on a 48000 stream is 4x too long / "deflated").
+            actual_sr = int(getattr(self._stream, "samplerate", 0) or 0)
+            if actual_sr and actual_sr != self.sample_rate:
+                logging.warning(
+                    "StereoSound: stream opened at %d Hz (requested %d); using "
+                    "%d Hz for sound generation.",
+                    actual_sr,
+                    self.sample_rate,
+                    actual_sr,
+                )
+                self.sample_rate = actual_sr
+                sd.default.samplerate = actual_sr
             logging.info(
-                "StereoSound: persistent output stream open (latency~%.1f ms)",
+                "StereoSound: persistent output stream open at %d Hz (latency~%.1f ms)",
+                self.sample_rate,
                 self._stream.latency * 1000,
             )
         except Exception as exc:
