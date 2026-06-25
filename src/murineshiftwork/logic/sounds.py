@@ -162,23 +162,16 @@ class StereoSound:
             )
         self.sample_rate: int = _sr
 
-        # On Windows, WASAPI shared mode is locked to the mixer/default-format
-        # rate, so a higher device-native rate (e.g. the XONAR's 192000) needs
-        # EXCLUSIVE mode to bind the device directly. Auto-enable exclusive when
-        # the chosen rate exceeds the device's shared default, so the full rate is
-        # used rather than rejected (-9997) or resampled too slow ("deflated").
+        # Validate the chosen rate against the device (shared mode by default).
+        # If the device cannot provide it - e.g. the XONAR's 192000 when its
+        # driver/Windows format is NOT set to 192000 - fall back to the device's
+        # default rate so the stream opens at a supported rate (correct speed,
+        # lower rate) rather than failing or playing too slow ("deflated").
+        # Full 192000 requires the XONAR driver preset (7.1 channels / 192000 Hz)
+        # on Windows; see the hardware setup docs. WASAPI exclusive mode is
+        # opt-in (use_wasapi_exclusive) and intentionally NOT auto-enabled: it was
+        # silent on the XONAR output under test.
         _dev_default = int(_dev_dict.get("default_samplerate", 0))
-        if (
-            platform.system() == "Windows"
-            and _dev_default
-            and self.sample_rate > _dev_default
-        ):
-            self.use_wasapi_exclusive = True
-
-        # Validate the chosen rate in the mode we will actually open (exclusive
-        # when enabled). If even that is rejected, fall back to the device's
-        # default rate in shared mode so the stream opens at a supported rate
-        # (correct speed, lower rate) instead of failing or playing deflated.
         try:
             import sounddevice as sd
 
