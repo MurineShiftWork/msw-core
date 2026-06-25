@@ -47,3 +47,26 @@ def test_callback_streams_buffer_then_clears():
     assert (out2[1] == 0).all()
     assert s._play_buffer is None
     assert s._play_pos == 0
+
+
+def test_default_output_fallback_not_sysdefault(monkeypatch):
+    """No named device found -> resolve PortAudio's real default output
+    (cross-platform), not the invalid literal 'sysdefault' (silent on Windows)."""
+    import sys
+    import types
+
+    out_dict = {"name": "Speakers (Realtek)", "default_samplerate": 48000.0}
+    fake_sd = types.SimpleNamespace(
+        query_devices=lambda kind=None: out_dict,
+        default=types.SimpleNamespace(device=(1, 3)),
+    )
+    monkeypatch.setitem(sys.modules, "sounddevice", fake_sd)
+    monkeypatch.setattr(
+        "murineshiftwork.logic.sounds.find_sound_device", lambda **kw: None
+    )
+
+    s = StereoSound(sound_device="pipewire")  # not found -> default fallback
+
+    assert s.sound_device == (3, out_dict)  # a real device tuple, not "sysdefault"
+    assert s._device_id == 3
+    assert s.sample_rate == 48000
