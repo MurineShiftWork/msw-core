@@ -110,12 +110,32 @@ class StereoSound:
                     f"No sound device found for input '{sound_device}' "
                     f"or default '{self.default_sound_device}'"
                 )
-            else:
-                logging.warning(
-                    f"Sound device '{sound_device or self.default_sound_device}' not found "
-                    f": falling back to system default output."
+            # Fall back to PortAudio's real default output. The previous literal
+            # "sysdefault" is an ALSA-only name and is NOT a valid PortAudio device
+            # on Windows, so the stream open / sd.play silently failed there (no
+            # audio). Resolving the actual default output works cross-platform.
+            import sounddevice as sd
+
+            try:
+                out_dict = sd.query_devices(kind="output")
+                out_idx = (
+                    sd.default.device[1]
+                    if isinstance(sd.default.device, list | tuple)
+                    else sd.default.device
                 )
-                self.sound_device = "sysdefault"
+            except Exception as exc:
+                logging.warning(
+                    "Could not query a default output device (%s); using None.", exc
+                )
+                out_dict, out_idx = {}, None
+            self.sound_device = (out_idx, out_dict)
+            logging.warning(
+                "Sound device '%s' not found; falling back to the default output "
+                "'%s' (idx %s).",
+                sound_device or self.default_sound_device,
+                out_dict.get("name", "?"),
+                out_idx,
+            )
 
         _dev_dict = (
             self.sound_device[1] if not isinstance(self.sound_device, str) else {}
@@ -243,7 +263,10 @@ class StereoSound:
             )
         except Exception as exc:
             logging.warning(
-                "StereoSound: persistent stream unavailable (%s); using sd.play()",
+                "StereoSound: persistent output stream could not open on device "
+                "%r (%s); falling back to sd.play(). If there is no audio, verify "
+                "the device exists on this host (sounddevice.query_devices()).",
+                self._device_id,
                 exc,
             )
             self._stream = None
@@ -267,7 +290,9 @@ class StereoSound:
         """
         bup_dur = int(0.005 * self.sample_rate)
         t = np.arange(bup_dur) / self.sample_rate
-        bup = sum(np.sin(2 * np.pi * f * t) for f in (2000, 4000, 8000, 16000))
+        bup = np.zeros(bup_dur)
+        for _f in (2000, 4000, 8000, 16000):
+            bup += np.sin(2 * np.pi * _f * t)
         peak = np.max(np.abs(bup))
         if peak > 0:
             bup /= peak
