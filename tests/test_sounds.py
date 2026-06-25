@@ -73,25 +73,59 @@ def test_default_output_fallback_not_sysdefault(monkeypatch):
     assert s.sample_rate == 48000
 
 
-def test_sample_rate_falls_back_when_device_rejects(monkeypatch):
-    """A device may be found but reject the configured rate (e.g. XONAR 192000
-    under WASAPI shared mode); fall back to its reported default rate."""
-    import sys
+def _xonar_fake_sd(check):
     import types
 
+    return types.SimpleNamespace(
+        check_output_settings=check,
+        WasapiSettings=lambda exclusive=False: ("wasapi", exclusive),
+    )
+
+
+def test_high_rate_enables_wasapi_exclusive_on_windows(monkeypatch):
+    """On Windows, a device-native rate above the shared default (XONAR 192000)
+    keeps the full rate and auto-enables exclusive mode, validated in that mode."""
+    import sys
+
+    monkeypatch.setattr(
+        "murineshiftwork.logic.sounds.platform.system", lambda: "Windows"
+    )
     dev = {"name": "Speakers (XONAR SOUND CARD)", "default_samplerate": 48000.0}
+    calls = {}
 
-    def _reject(**kwargs):
-        raise RuntimeError("Invalid sample rate [PaErrorCode -9997]")
+    def _check(**kw):
+        calls.update(sr=kw.get("samplerate"), extra=kw.get("extra_settings"))
 
-    fake_sd = types.SimpleNamespace(check_output_settings=_reject)
-    monkeypatch.setitem(sys.modules, "sounddevice", fake_sd)
+    monkeypatch.setitem(sys.modules, "sounddevice", _xonar_fake_sd(_check))
     monkeypatch.setattr(
         "murineshiftwork.logic.sounds.find_sound_device", lambda **kw: (10, dev)
     )
 
     s = StereoSound(sound_device="XONAR SOUND CARD")
 
-    # name matched 192000 in sample_rate_dict, but the device rejects it -> 48000
-    assert s.sample_rate == 48000
-    assert s._device_id == 10
+    assert s.sample_rate == 192000  # full rate kept (not downgraded)
+    assert s.use_wasapi_exclusive is True
+    assert calls["sr"] == 192000
+    assert calls["extra"] == ("wasapi", True)  # validated in exclusive mode
+
+
+def test_falls_back_to_shared_default_when_even_exclusive_rejected(monkeypatch):
+    import sys
+
+    monkeypatch.setattr(
+        "murineshiftwork.logic.sounds.platform.system", lambda: "Windows"
+    )
+    dev = {"name": "Speakers (XONAR SOUND CARD)", "default_samplerate": 48000.0}
+
+    def _reject(**kw):
+        raise RuntimeError("Invalid sample rate [PaErrorCode -9997]")
+
+    monkeypatch.setitem(sys.modules, "sounddevice", _xonar_fake_sd(_reject))
+    monkeypatch.setattr(
+        "murineshiftwork.logic.sounds.find_sound_device", lambda **kw: (10, dev)
+    )
+
+    s = StereoSound(sound_device="XONAR SOUND CARD")
+
+    assert s.sample_rate == 48000  # fell back to the shared default rate
+    assert s.use_wasapi_exclusive is False

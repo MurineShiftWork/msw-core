@@ -162,11 +162,23 @@ class StereoSound:
             )
         self.sample_rate: int = _sr
 
-        # Validate the chosen rate against the device. WASAPI shared mode on
-        # Windows is locked to the device mixer format and rejects rates it
-        # cannot provide (e.g. 192000 for a card that only does it in exclusive
-        # mode / on Linux). Fall back to the device's reported default rate so
-        # the output stream can actually open.
+        # On Windows, WASAPI shared mode is locked to the mixer/default-format
+        # rate, so a higher device-native rate (e.g. the XONAR's 192000) needs
+        # EXCLUSIVE mode to bind the device directly. Auto-enable exclusive when
+        # the chosen rate exceeds the device's shared default, so the full rate is
+        # used rather than rejected (-9997) or resampled too slow ("deflated").
+        _dev_default = int(_dev_dict.get("default_samplerate", 0))
+        if (
+            platform.system() == "Windows"
+            and _dev_default
+            and self.sample_rate > _dev_default
+        ):
+            self.use_wasapi_exclusive = True
+
+        # Validate the chosen rate in the mode we will actually open (exclusive
+        # when enabled). If even that is rejected, fall back to the device's
+        # default rate in shared mode so the stream opens at a supported rate
+        # (correct speed, lower rate) instead of failing or playing deflated.
         try:
             import sounddevice as sd
 
@@ -175,18 +187,22 @@ class StereoSound:
                 channels=self.default_sound_channels,
                 samplerate=self.sample_rate,
                 dtype="float32",
+                extra_settings=self._wasapi_extra_settings(),
             )
         except Exception as exc:
-            _fallback_sr = int(_dev_dict.get("default_samplerate", 0)) or 48000
-            if _fallback_sr != self.sample_rate:
+            _fallback_sr = _dev_default or 48000
+            if _fallback_sr != self.sample_rate or self.use_wasapi_exclusive:
                 logging.warning(
-                    "Sound device %r rejects %d Hz (%s); falling back to %d Hz.",
+                    "Sound device %r rejects %d Hz (exclusive=%s): %s; using "
+                    "%d Hz shared.",
                     self._device_id,
                     self.sample_rate,
+                    self.use_wasapi_exclusive,
                     exc,
                     _fallback_sr,
                 )
                 self.sample_rate = _fallback_sr
+                self.use_wasapi_exclusive = False
 
         self.ttl_channel = ttl_channel or self.default_ttl_channel
         if self.ttl_channel != 0 and self.ttl_channel != 1:
