@@ -59,6 +59,7 @@ def test_default_output_fallback_not_sysdefault(monkeypatch):
     fake_sd = types.SimpleNamespace(
         query_devices=lambda kind=None: out_dict,
         default=types.SimpleNamespace(device=(1, 3)),
+        check_output_settings=lambda **kw: None,
     )
     monkeypatch.setitem(sys.modules, "sounddevice", fake_sd)
     monkeypatch.setattr(
@@ -70,3 +71,29 @@ def test_default_output_fallback_not_sysdefault(monkeypatch):
     assert s.sound_device == (3, out_dict)  # a real device tuple, not "sysdefault"
     assert s._device_id == 3
     assert s.sample_rate == 48000
+
+
+def test_falls_back_to_default_rate_when_device_rejects(monkeypatch):
+    """Device found but rejecting the configured rate (e.g. XONAR 192000 when its
+    driver/Windows format is not at 192000): fall back to the device default so
+    playback is correct-speed (audible) rather than deflated. Full 192000 needs
+    the XONAR driver preset (7.1ch / 192000) - see the hardware setup docs.
+    Exclusive mode is not auto-enabled (it was silent on the XONAR output)."""
+    import sys
+    import types
+
+    dev = {"name": "Speakers (XONAR SOUND CARD)", "default_samplerate": 48000.0}
+
+    def _reject(**kw):
+        raise RuntimeError("Invalid sample rate [PaErrorCode -9997]")
+
+    fake_sd = types.SimpleNamespace(check_output_settings=_reject)
+    monkeypatch.setitem(sys.modules, "sounddevice", fake_sd)
+    monkeypatch.setattr(
+        "murineshiftwork.logic.sounds.find_sound_device", lambda **kw: (10, dev)
+    )
+
+    s = StereoSound(sound_device="XONAR SOUND CARD")
+
+    assert s.sample_rate == 48000  # correct-speed fallback, not deflated
+    assert s.use_wasapi_exclusive is False  # exclusive not auto-enabled

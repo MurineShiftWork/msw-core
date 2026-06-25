@@ -162,6 +162,41 @@ class StereoSound:
             )
         self.sample_rate: int = _sr
 
+        # Validate the chosen rate against the device (shared mode by default).
+        # If the device cannot provide it - e.g. the XONAR's 192000 when its
+        # driver/Windows format is NOT set to 192000 - fall back to the device's
+        # default rate so the stream opens at a supported rate (correct speed,
+        # lower rate) rather than failing or playing too slow ("deflated").
+        # Full 192000 requires the XONAR driver preset (7.1 channels / 192000 Hz)
+        # on Windows; see the hardware setup docs. WASAPI exclusive mode is
+        # opt-in (use_wasapi_exclusive) and intentionally NOT auto-enabled: it was
+        # silent on the XONAR output under test.
+        _dev_default = int(_dev_dict.get("default_samplerate", 0))
+        try:
+            import sounddevice as sd
+
+            sd.check_output_settings(
+                device=self._device_id,
+                channels=self.default_sound_channels,
+                samplerate=self.sample_rate,
+                dtype="float32",
+                extra_settings=self._wasapi_extra_settings(),
+            )
+        except Exception as exc:
+            _fallback_sr = _dev_default or 48000
+            if _fallback_sr != self.sample_rate or self.use_wasapi_exclusive:
+                logging.warning(
+                    "Sound device %r rejects %d Hz (exclusive=%s): %s; using "
+                    "%d Hz shared.",
+                    self._device_id,
+                    self.sample_rate,
+                    self.use_wasapi_exclusive,
+                    exc,
+                    _fallback_sr,
+                )
+                self.sample_rate = _fallback_sr
+                self.use_wasapi_exclusive = False
+
         self.ttl_channel = ttl_channel or self.default_ttl_channel
         if self.ttl_channel != 0 and self.ttl_channel != 1:
             raise ValueError(
@@ -257,8 +292,25 @@ class StereoSound:
                 extra_settings=self._wasapi_extra_settings(),
             )
             self._stream.start()
+            # Adopt the stream's ACTUAL negotiated rate: the device/host may open
+            # at a different rate than requested. Sounds are generated AFTER this
+            # (at self.sample_rate), so they must match the rate the stream truly
+            # runs at, or playback is the wrong speed (e.g. a 192000 buffer played
+            # on a 48000 stream is 4x too long / "deflated").
+            actual_sr = int(getattr(self._stream, "samplerate", 0) or 0)
+            if actual_sr and actual_sr != self.sample_rate:
+                logging.warning(
+                    "StereoSound: stream opened at %d Hz (requested %d); using "
+                    "%d Hz for sound generation.",
+                    actual_sr,
+                    self.sample_rate,
+                    actual_sr,
+                )
+                self.sample_rate = actual_sr
+                sd.default.samplerate = actual_sr
             logging.info(
-                "StereoSound: persistent output stream open (latency~%.1f ms)",
+                "StereoSound: persistent output stream open at %d Hz (latency~%.1f ms)",
+                self.sample_rate,
                 self._stream.latency * 1000,
             )
         except Exception as exc:
@@ -408,12 +460,24 @@ class StereoSound:
 
                     _time.sleep(len(buf) / self.sample_rate)
             else:
-                sd.play(
-                    buf,
-                    self.sample_rate,
-                    device=self._device_id,
-                    blocking=self.sounds[sound_code]["play_blocking"],
-                )
+                # Best-effort: this runs inside the Bpod softcode handler thread,
+                # so an audio backend error must not crash the session.
+                try:
+                    sd.play(
+                        buf,
+                        self.sample_rate,
+                        device=self._device_id,
+                        blocking=self.sounds[sound_code]["play_blocking"],
+                    )
+                except Exception as exc:
+                    logging.warning(
+                        "StereoSound: sd.play failed on device %r (%s); no audio "
+                        "this trial.",
+                        self._device_id,
+                        exc,
+                    )
+                    if raise_errors:
+                        raise
         elif sound_code == self.sound_stop_code:
             logging.debug("Stopped current sound.")
             if self._stream is not None:
