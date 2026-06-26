@@ -13,8 +13,8 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "msw-io>=1.6.0",
-    "msw-plugin-api>=0.2.0",
+    "msw-io>=1.9.0",
+    "msw-plugin-api>=0.2.3",
     "ttl-barcoder>=0.4.2",
     "pydantic>=2.0",
     "rich",
@@ -27,7 +27,7 @@ dependencies = [
     "pyserial",
     "pybpod-api",
     "safe-and-collaborative-architecture",  # provides sca namespace; undeclared dep of pybpod-api
-    "one-axis-stage>=0.2.0",
+    "one-axis-stage>=0.2.2",
     "sounddevice",
 ]
 
