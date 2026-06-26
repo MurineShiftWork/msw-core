@@ -174,9 +174,15 @@ def _evaluate_and_load_configs(args_dict=None):
         with Path(_task_yaml_file).open() as _f:
             _raw_task_yaml = yaml.safe_load(_f) or {}
     _task_schema = validate_task_yaml(args_dict.get("task", ""), _raw_task_yaml)
-    # acq_type: the acquisition identity (drives the acquisition dir name).
-    # Uses the task.yaml session_type when set, else the task name.
-    args_dict["acq_type"] = _task_schema.session_type or args_dict.get("task", "")
+    # acq_type (v4.3): the acquisition SYSTEM, not the task. Behaviour tasks are
+    # "msw" and carry the task name as a visible task token in the path; a task may
+    # pin a typed acq_type (video_flir, pxi, photo, video_rce) for a camera/ephys-
+    # primary acquisition, which then carries no task token. The framework injects
+    # "msw" rather than reading it from task.yaml.
+    from murineshiftwork.namespace.paths import _KNOWN_ACQ_TYPES
+
+    _declared = _task_schema.session_type
+    args_dict["acq_type"] = _declared if _declared in _KNOWN_ACQ_TYPES else "msw"
     # session_type: the session-container label. Opt-in only (via --session-type);
     # the container is a bare subject__datetime by default.
     args_dict["session_type"] = args_dict.get("session_type") or ""
