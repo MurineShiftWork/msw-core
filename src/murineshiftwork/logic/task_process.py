@@ -209,11 +209,14 @@ class TaskProcess:
 
         self.task_name = self.task_in
         _session_type = kwargs.get("session_type") or None
-        # acq_type identifies the acquisition (task identity); falls back to the
-        # task name when task.yaml defines no session_type.
-        _acq_type = kwargs.get("acq_type") or self.task_name
-        # MSW writes a version by default; task.yaml may override it.
-        _session_version = kwargs.get("session_version") or 1
+        # v4.3: behaviour acquisitions are the "msw" acq system, with the task as
+        # a visible token in the path (acq_type=msw, task=<name>). Typed
+        # acquisitions (video_flir, pxi, ...) pass their own acq_type explicitly
+        # and carry no task token.
+        _acq_type = kwargs.get("acq_type") or "msw"
+        # task.yaml version is recorded in the session YAML (task_version), not as
+        # a __vN path suffix -- v4.3 drops __vN on new writes.
+        self.task_version = kwargs.get("session_version") or 1
         self.session_paths = generate_session_paths(
             basepath=Path(self.out_path),
             subject=self.subject,
@@ -221,7 +224,7 @@ class TaskProcess:
             acq_type=_acq_type,
             linked_to=linked_to,
             session_type=_session_type,
-            acq_version=_session_version,
+            acq_version=None,
         )
         self.input_kwargs["task_name"] = self.task_name
         self.input_kwargs["session_paths"] = self.session_paths
@@ -429,6 +432,7 @@ class TaskProcess:
                 ),
                 "acq_type": self.session_paths.get("acq_type", ""),
                 "acq_version": self.session_paths.get("acq_version"),
+                "task_version": self.task_version,
                 "session_type": self.input_kwargs.get("session_type") or "",
                 "host_session_name": self.session_paths.get("host_session_name", ""),
             },
