@@ -27,8 +27,9 @@ dependencies = [
     "pyserial",
     "pybpod-api",
     "safe-and-collaborative-architecture",  # provides sca namespace; undeclared dep of pybpod-api
-    "one-axis-stage>=0.2.2",
     "sounddevice",
+    # Concrete instrument drivers (one-axis-stage, rce, flir, pulsepal, scales) are
+    # lazy-imported by the hardware layer and provided via extras, not required here.
 ]
 
 [project.urls]
