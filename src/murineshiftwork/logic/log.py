@@ -8,7 +8,7 @@ from murineshiftwork.namespace import msw_file
 from rich import get_console
 from rich.logging import RichHandler
 
-from murineshiftwork.logic.paths import MSW_DATETIME_FORMAT
+from murineshiftwork.namespace.paths import MSW_DATETIME_FORMAT
 
 # IDs of handlers that MSW owns on the root logger: anything else is third-party.
 _MSW_ROOT_HANDLER_IDS: set[int] = set()
