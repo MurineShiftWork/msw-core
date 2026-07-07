@@ -18,6 +18,7 @@ from murineshiftwork.namespace.manifest import (
     finalize_acquisition_in_session,
     init_acquisition_manifest,
     init_session_manifest,
+    set_manifest_metadata,
 )
 from murineshiftwork.namespace.paths import generate_session_paths
 
@@ -242,16 +243,20 @@ class TaskProcess:
 
         _container = Path(self.session_paths["session_folder"]).parent
         init_session_manifest(_container, self.session_paths["host_session_name"])
-        append_acquisition_to_session(
-            _container, self.session_paths["session_basename"]
-        )
+        # Reward config is a SESSION-level fact (constant across a session's
+        # acquisitions), so it goes on the session manifest, not per-acquisition.
         reward_md = build_reward_metadata(
             self.input_kwargs.get("settings.task.patched", {})
         )
+        if reward_md:
+            set_manifest_metadata(
+                _container / "session_manifest.yaml", {"reward": reward_md}
+            )
+        append_acquisition_to_session(
+            _container, self.session_paths["session_basename"]
+        )
         init_acquisition_manifest(
-            self.session_paths["session_folder"],
-            self.session_paths["session_basename"],
-            metadata={"reward": reward_md} if reward_md else None,
+            self.session_paths["session_folder"], self.session_paths["session_basename"]
         )
 
         patch_logging_levels()
