@@ -38,6 +38,7 @@ from murineshiftwork.logic.misc import (
     test_serial_port_is_accessible,
 )
 from murineshiftwork.logic.paths import test_path_is_writable
+from murineshiftwork.logic.reward_metadata import build_reward_metadata
 
 
 def _resolve_msw_version() -> str:
@@ -244,8 +245,13 @@ class TaskProcess:
         append_acquisition_to_session(
             _container, self.session_paths["session_basename"]
         )
+        reward_md = build_reward_metadata(
+            self.input_kwargs.get("settings.task.patched", {})
+        )
         init_acquisition_manifest(
-            self.session_paths["session_folder"], self.session_paths["session_basename"]
+            self.session_paths["session_folder"],
+            self.session_paths["session_basename"],
+            metadata={"reward": reward_md} if reward_md else None,
         )
 
         patch_logging_levels()
