@@ -53,6 +53,26 @@ def test_rce_adapter_registers_and_finalizes_peer(tmp_path):
     assert _acquisitions(tmp_path)[_RCE]["status"] == "complete"
 
 
+def test_rce_adapter_resolves_relative_path_against_output_dir(tmp_path):
+    # The real caller passes session_folder_relative (relative to the data
+    # root), so registration must resolve it against output_dir rather than the
+    # process CWD: otherwise the manifest write lands on a path that does not
+    # exist and raises FileNotFoundError.
+    rel = f"s1/s1__20260620_120000_000000/{_RCE}"
+    container = tmp_path / "s1" / "s1__20260620_120000_000000"
+    container.mkdir(parents=True)
+    adapter = RceConductorAdapter(
+        ensemble_cfg_file="cfg.yaml", output_dir=str(tmp_path)
+    )
+
+    adapter.initialize_acquisition(acquisition_path=rel, acquisition_name=_RCE)
+    assert (container / "session_manifest.yaml").exists()
+    assert _acquisitions(container)[_RCE]["status"] == "running"
+
+    adapter.stop_acquisition()  # conductor is None; must still finalize
+    assert _acquisitions(container)[_RCE]["status"] == "complete"
+
+
 def test_registration_is_skipped_without_basename(tmp_path):
     client = FlirBonsaiClient(config=None, output_dir=str(tmp_path))
     client.initialize_acquisition(acqdir=str(tmp_path / _FLIR), basename="")
