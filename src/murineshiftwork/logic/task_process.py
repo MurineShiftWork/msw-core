@@ -18,7 +18,6 @@ from murineshiftwork.namespace.manifest import (
     finalize_acquisition_in_session,
     init_acquisition_manifest,
     init_session_manifest,
-    set_manifest_metadata,
 )
 from murineshiftwork.namespace.paths import generate_session_paths
 
@@ -243,20 +242,28 @@ class TaskProcess:
 
         _container = Path(self.session_paths["session_folder"]).parent
         init_session_manifest(_container, self.session_paths["host_session_name"])
-        # Reward config is a SESSION-level fact (constant across a session's
-        # acquisitions), so it goes on the session manifest, not per-acquisition.
-        reward_md = build_reward_metadata(
-            self.input_kwargs.get("settings.task.patched", {})
-        )
-        if reward_md:
-            set_manifest_metadata(
-                _container / "session_manifest.yaml", {"reward": reward_md}
-            )
         append_acquisition_to_session(
             _container, self.session_paths["session_basename"]
         )
+        # Acquisition-level provenance so a loaded acquisition is self-describing:
+        # the task schema version (which evaluator produced its trials) and the reward
+        # config. Both follow the acquisition, so they live on the acquisition manifest.
+        _ts = self.input_kwargs.get("settings.task.patched", {})
+        acq_metadata: dict = {
+            "task": {
+                "task": self.task_name,
+                "task_schema_version": self.task_version,
+            }
+        }
+        if _ts.get("scoring_metric"):
+            acq_metadata["task"]["scoring_metric"] = _ts["scoring_metric"]
+        reward_md = build_reward_metadata(_ts)
+        if reward_md:
+            acq_metadata["reward"] = reward_md
         init_acquisition_manifest(
-            self.session_paths["session_folder"], self.session_paths["session_basename"]
+            self.session_paths["session_folder"],
+            self.session_paths["session_basename"],
+            metadata=acq_metadata,
         )
 
         patch_logging_levels()
