@@ -1,0 +1,36 @@
+name: Renovate
+
+on:
+  # Nightly run; Renovate honours the weekly window in renovate.json for opening
+  # PRs, and the nightly cadence lets a green weekly PR auto-merge within a day.
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  LOG_LEVEL: debug
+  RENOVATE_REPOSITORIES: ${{ github.repository }}  # operate on this repo only
+
+jobs:
+  renovate:
+    name: Renovate dependency scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # Author PRs with a dedicated PAT (RENOVATE_TOKEN), not GITHUB_TOKEN: a PR
+      # opened with GITHUB_TOKEN does not trigger other workflows, so ci.yml would
+      # not run on the PR (breaking the CI-gated automerge) and the merge would not
+      # trigger versioning.yml. A PAT's events do trigger those, so the dep bump
+      # flows PR -> CI -> automerge -> versioning -> release as intended.
+      # RENOVATE_TOKEN must be a fine-grained PAT on this repo with
+      # Contents + Pull requests + Workflows: read and write.
+      - uses: renovatebot/github-action@v46.1.17
+        with:
+          configurationFile: renovate.json
+          token: ${{ secrets.RENOVATE_TOKEN }}
