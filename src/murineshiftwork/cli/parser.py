@@ -19,6 +19,7 @@ from murineshiftwork.cli.execute import (
     run_subject,
     run_task,
 )
+from murineshiftwork.cli.config import run_config_upgrade
 from murineshiftwork.cli.post import run_post_clean, run_post_run
 from murineshiftwork.cli.tasks import (
     run_tasks_defaults,
@@ -608,6 +609,43 @@ def make_subparser_post(sub_parsers):
     pr.set_defaults(func=run_post_run)
 
 
+def make_subparser_config(sub_parsers):
+    p = sub_parsers.add_parser(
+        "config",
+        help="Inspect and upgrade config overlays",
+        formatter_class=ArgparseFormatter,
+        description=dedent(
+            """\
+            Config overlay management.
+
+            Commands:
+              msw config upgrade task <name>   Add new bundled-default keys to a task overlay
+              msw config upgrade --all         Upgrade every task overlay in the config dir
+
+            User values are preserved; only keys new in the bundled task.yaml are added
+            (a timestamped .bak is written first). Use --dry-run to preview.
+
+            Examples:
+              msw config upgrade task sequence --dry-run
+              msw config upgrade task sequence --yes
+              msw config upgrade --all
+            """
+        ),
+        epilog=_CREDIT_EPILOG,
+    )
+    sub = p.add_subparsers(metavar="subcommand", dest="subcommand")
+    sub.required = True
+    pu = sub.add_parser("upgrade", help="Add new bundled-default keys to config overlays")
+    pu.add_argument("kind", nargs="?", default="task", choices=["task", "setup", "subject"],
+                    help="Config kind to upgrade (default: task)")
+    pu.add_argument("name", nargs="?", default="", help="Config name (e.g. a task name)")
+    pu.add_argument("--all", action="store_true", help="Upgrade every task overlay")
+    pu.add_argument("--dry-run", action="store_true", dest="dry_run", help="Preview without writing")
+    pu.add_argument("--yes", action="store_true", help="Apply without confirmation")
+    pu.add_argument("-cd", "--config-dir", type=str, default="", dest="config_dir")
+    pu.set_defaults(func=run_config_upgrade)
+
+
 def make_subparser_tasks(sub_parsers):
     p = sub_parsers.add_parser(
         "tasks",
@@ -721,6 +759,7 @@ def parse_args(args=None):
     make_subparser_action(sub_parsers)
     make_subparser_post(sub_parsers)
     make_subparser_tasks(sub_parsers)
+    make_subparser_config(sub_parsers)
 
     # Load plugin subcommands registered under the "msw.cli" entry-point group.
     # Each plugin calls register(sub_parsers) to add its own subparser(s).
