@@ -35,11 +35,22 @@ def _setup(tmp_path, bundled, overlay, monkeypatch):
 
 
 def test_upgrade_adds_missing_keys_preserving_user_values(tmp_path, monkeypatch):
-    bundled = {"session_type": "demo", "reward_ul": 4.0, "new_field": True, "block": {"a": 1, "b": 2}}
-    overlay = {"session_type": "demo", "reward_ul": 9.9, "block": {"a": 7}}  # user edits + drift
+    bundled = {
+        "session_type": "demo",
+        "reward_ul": 4.0,
+        "new_field": True,
+        "block": {"a": 1, "b": 2},
+    }
+    overlay = {
+        "session_type": "demo",
+        "reward_ul": 9.9,
+        "block": {"a": 7},
+    }  # user edits + drift
     overlay_path = _setup(tmp_path, bundled, overlay, monkeypatch)
 
-    changed = _upgrade_task_overlay("demo", str(tmp_path / "cfg"), dry_run=False, yes=True)
+    changed = _upgrade_task_overlay(
+        "demo", str(tmp_path / "cfg"), dry_run=False, yes=True
+    )
     assert changed == 1
     result = yaml.safe_load(overlay_path.read_text())
     # new keys added
@@ -53,13 +64,19 @@ def test_upgrade_adds_missing_keys_preserving_user_values(tmp_path, monkeypatch)
 def test_upgrade_noop_when_up_to_date(tmp_path, monkeypatch):
     d = {"session_type": "demo", "reward_ul": 4.0}
     overlay_path = _setup(tmp_path, d, dict(d), monkeypatch)
-    assert _upgrade_task_overlay("demo", str(tmp_path / "cfg"), dry_run=False, yes=True) == 0
+    assert (
+        _upgrade_task_overlay("demo", str(tmp_path / "cfg"), dry_run=False, yes=True)
+        == 0
+    )
     assert not list(overlay_path.parent.glob("task.yaml.bak.*"))  # nothing written
 
 
 def test_dry_run_reports_but_does_not_write(tmp_path, monkeypatch):
     overlay_path = _setup(tmp_path, {"a": 1, "b": 2}, {"a": 1}, monkeypatch)
     before = overlay_path.read_text()
-    assert _upgrade_task_overlay("demo", str(tmp_path / "cfg"), dry_run=True, yes=True) == 1
+    assert (
+        _upgrade_task_overlay("demo", str(tmp_path / "cfg"), dry_run=True, yes=True)
+        == 1
+    )
     assert overlay_path.read_text() == before  # unchanged
     assert not list(overlay_path.parent.glob("task.yaml.bak.*"))

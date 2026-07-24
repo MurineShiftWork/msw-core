@@ -20,7 +20,10 @@ from pathlib import Path
 
 import yaml
 
-from murineshiftwork.cli.tasks import _task_yaml_path, find_task_by_name, list_available_tasks
+from murineshiftwork.cli.tasks import (
+    _task_yaml_path,
+    find_task_by_name,
+)
 from murineshiftwork.logic.config.ini import deep_merge
 from murineshiftwork.logic.machine_config import resolve_config_dir
 
@@ -46,7 +49,9 @@ def _upgrade_task_overlay(name: str, config_dir: str, dry_run: bool, yes: bool) 
     bundled_path = _task_yaml_path(resolved)
     overlay_path = Path(config_dir) / "tasks" / resolved / "task.yaml"
     if not overlay_path.exists():
-        print(f"  skip  {resolved}  (no overlay; run `msw tasks init-configs {resolved}`)")
+        print(
+            f"  skip  {resolved}  (no overlay; run `msw tasks init-configs {resolved}`)"
+        )
         return 0
 
     bundled = yaml.safe_load(bundled_path.read_text()) or {}
@@ -75,7 +80,9 @@ def _upgrade_task_overlay(name: str, config_dir: str, dry_run: bool, yes: bool) 
     backup.write_text(overlay_path.read_text())
     merged = deep_merge(bundled, overlay)  # bundled keys + user overrides winning
     overlay_path.write_text(
-        yaml.safe_dump(merged, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        yaml.safe_dump(
+            merged, default_flow_style=False, allow_unicode=True, sort_keys=False
+        )
     )
     print(f"  updated {resolved}  (backup: {backup.name})")
     return 1
@@ -93,7 +100,10 @@ def run_config_upgrade(
     """Handler for ``msw config upgrade``."""
     cfg = resolve_config_dir(cli_override=config_dir)
     if not cfg:
-        print("Error: config_dir not set. Run 'msw init <config_dir>' first or pass -cd.", file=sys.stderr)
+        print(
+            "Error: config_dir not set. Run 'msw init <config_dir>' first or pass -cd.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     if kind in ("setup", "subject"):
@@ -107,16 +117,21 @@ def run_config_upgrade(
     if all or (kind == "task" and not name):
         # every task overlay present in the config dir
         overlay_root = Path(cfg) / "tasks"
-        targets = sorted(
-            d.name for d in overlay_root.iterdir() if (d / "task.yaml").exists()
-        ) if overlay_root.is_dir() else []
+        targets = (
+            sorted(d.name for d in overlay_root.iterdir() if (d / "task.yaml").exists())
+            if overlay_root.is_dir()
+            else []
+        )
         if not targets:
             print(f"No task overlays found under {overlay_root}.")
             return
     elif kind == "task":
         targets = [name]
     else:
-        print("Usage: msw config upgrade task <name> [--dry-run] [--yes]  |  --all", file=sys.stderr)
+        print(
+            "Usage: msw config upgrade task <name> [--dry-run] [--yes]  |  --all",
+            file=sys.stderr,
+        )
         sys.exit(2)
 
     changed = sum(_upgrade_task_overlay(t, cfg, dry_run, yes) for t in targets)

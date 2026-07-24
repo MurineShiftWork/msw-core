@@ -47,11 +47,17 @@ def test_multi_valve_uses_by_valve_and_provenance():
             "valve_s_for_ul": _s_for_ul,
             "HARDWARE_VALVES_FOR_WATER": [1, 2],
         },
-        valve_calibrations={1: Cal("2026-06-18", "exponential"), 2: {"updated": "2026-06-19"}},
+        valve_calibrations={
+            1: Cal("2026-06-18", "exponential"),
+            2: {"updated": "2026-06-19"},
+        },
     )
     assert set(r["by_valve"]) == {1, 2}
     assert r["by_valve"][1]["valve_open_ms"] == 20.0
-    assert r["by_valve"][1]["calibration"] == {"date": "2026-06-18", "fit_model": "exponential"}
+    assert r["by_valve"][1]["calibration"] == {
+        "date": "2026-06-18",
+        "fit_model": "exponential",
+    }
     assert r["by_valve"][2]["calibration"] == {"date": "2026-06-19"}
     assert "valve" not in r  # not flattened when multi-spout
 

@@ -65,7 +65,7 @@ def build_reward_metadata(
             by_valve[v] = entry
 
     if len(by_valve) == 1:
-        (valve, entry), = by_valve.items()
+        ((valve, entry),) = by_valve.items()
         reward["valve"] = valve
         reward.update(entry)
     elif by_valve:
