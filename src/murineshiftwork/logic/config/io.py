@@ -147,7 +147,7 @@ def save_subject_task_overrides(
         yaml.dump(raw, f, **_YAML_DUMP_KWARGS)
 
     logging.info(
-        f"Saved task_overrides {overrides} for subject '{subject_name}', task '{task_name}' → {path}"
+        f"Saved task_overrides {overrides} for subject '{subject_name}', task '{task_name}' -> {path}"
     )
 
 

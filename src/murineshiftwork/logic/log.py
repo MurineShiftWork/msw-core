@@ -47,7 +47,9 @@ def setup_logging(level=None, log_file=None, task="", subject="", setup=""):
             with contextlib.suppress(OSError):
                 old.unlink()
 
-    file_handler = logging.FileHandler(filename=str(central_log_path))
+    # encoding="utf-8": on Windows a FileHandler defaults to the locale codec (cp1252)
+    # and raises UnicodeEncodeError on non-latin-1 log text (e.g. a "->" arrow, "µ").
+    file_handler = logging.FileHandler(filename=str(central_log_path), encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
@@ -71,7 +73,7 @@ def setup_logging(level=None, log_file=None, task="", subject="", setup=""):
 def add_session_log_handler(session_file_path: str, level: str = "INFO"):
     """Add a per-session FileHandler writing INFO+ records to the session folder."""
     log_path = msw_file(session_file_path, "log")
-    handler = logging.FileHandler(filename=str(log_path))
+    handler = logging.FileHandler(filename=str(log_path), encoding="utf-8")
     handler.setLevel(getattr(logging, level.upper()))
     formatter = logging.Formatter("%(asctime)s %(levelname)-8s %(message)s")
     formatter.datefmt = "%Y-%m-%d %H:%M:%S"
