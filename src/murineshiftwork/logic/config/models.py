@@ -419,7 +419,7 @@ class SetupConfig(BaseModel):
 # ---------------------------------------------------------------------------
 # Subject config
 
-SUBJECT_CONFIG_SCHEMA_VERSION = 1
+SUBJECT_CONFIG_SCHEMA_VERSION = 2
 
 
 class SubjectConfig(BaseModel):
@@ -430,7 +430,7 @@ class SubjectConfig(BaseModel):
     default settings at session start.
     """
 
-    schema_version: int = 1
+    schema_version: int = 2
     name: str = Field(
         description="Primary animal identifier; must match the YAML filename stem."
     )
@@ -448,7 +448,18 @@ class SubjectConfig(BaseModel):
         default_factory=dict,
         description=(
             "Mapping of task name to a flat dict of settings overrides applied "
-            "on top of the task defaults for this animal only."
+            "on top of the task defaults for this animal only. Operator intent "
+            "(human-owned): sticky task_mode, forced params, stage position, ..."
+        ),
+    )
+    task_state: dict[str, dict[str, Any]] = Field(
+        default_factory=dict,
+        description=(
+            "Mapping of task name to that task's persisted, machine-written progress "
+            "(earned state, distinct from operator overrides). E.g. the sequence task "
+            "stores per-(subject, sequence) level here: "
+            "task_state['sequence']['sequences'][<sequence_id>] = {'level': N, 'updated': ...}. "
+            "Populated by the task's session-end writeback; safe for tooling to rewrite."
         ),
     )
 

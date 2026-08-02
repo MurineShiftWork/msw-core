@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
 import yaml
@@ -163,6 +164,55 @@ def save_subject_task_stage_position(
     )
 
 
+def save_subject_task_state(
+    config_dir: str | Path,
+    subject_name: str,
+    task_name: str,
+    state: dict,
+) -> None:
+    """Deep-merge *state* into the subject's ``task_state[task_name]`` (machine-written progress).
+
+    Companion to :func:`save_subject_task_overrides`, but for *earned state* rather than operator
+    overrides. Creates the subjects YAML if absent; migrates it to the current schema first; and
+    **deep-merges** so nested maps (e.g. the sequence task's per-sequence level map) update
+    key-by-key instead of being replaced. Typical caller: the sequence session-end writeback with
+    ``state={"sequences": {"default": {"level": 7, "updated": "..."}}}``.
+    """
+    from murineshiftwork.logic.config import deep_merge
+
+    subjects_dir = Path(config_dir) / "subjects"
+    subjects_dir.mkdir(parents=True, exist_ok=True)
+    path = subjects_dir / f"{subject_name}.yaml"
+
+    if path.exists():
+        with path.open() as f:
+            raw = yaml.safe_load(f) or {}
+        raw = _migrate_subject_config(raw)
+    else:
+        raw = {
+            "schema_version": SUBJECT_CONFIG_SCHEMA_VERSION,
+            "name": subject_name,
+            "registered": "",
+            "project": "",
+            "experiment": "",
+            "comment": "",
+            "aliases": [],
+            "task_overrides": {},
+            "task_state": {},
+        }
+
+    raw["schema_version"] = SUBJECT_CONFIG_SCHEMA_VERSION
+    task_states = raw.setdefault("task_state", {})
+    task_states[task_name] = deep_merge(task_states.get(task_name) or {}, state)
+
+    with path.open("w") as f:
+        yaml.dump(raw, f, **_YAML_DUMP_KWARGS)
+
+    logging.info(
+        f"Saved task_state {state} for subject '{subject_name}', task '{task_name}' -> {path}"
+    )
+
+
 def update_stage_config(
     config_dir: str | Path,
     setup_name: str,
@@ -205,22 +255,54 @@ def update_stage_config(
     return True
 
 
-def _migrate_subject_config(raw: dict) -> dict:
-    """Upgrade raw subject config dict to SUBJECT_CONFIG_SCHEMA_VERSION in-place.
+def migrate_schema(
+    raw: dict,
+    *,
+    target: int,
+    steps: dict[int, Callable[[dict], dict]],
+    version_key: str = "schema_version",
+) -> dict:
+    """Chain versioned migration steps on a raw config dict up to ``target``, losslessly.
 
-    Each branch handles one version step so migrations chain automatically.
-    Returns the (possibly modified) dict: always at SUBJECT_CONFIG_SCHEMA_VERSION.
+    ``steps[n]`` upgrades a v(n-1) dict to vn; every step for a version above the dict's current
+    ``version_key`` and up to ``target`` runs in order. Each step mutates and returns the raw
+    dict; **keys a step does not touch are preserved verbatim** - no value is dropped, which is
+    the guarantee callers rely on across schema upgrades. Idempotent once already at ``target``.
+    Stamps ``version_key`` to ``target`` at the end.
+
+    Generic (no config-type knowledge) so subject / task / setup configs can all reuse it; keep
+    the per-step transforms task-agnostic where possible and let each task fold its own legacy
+    state in at runtime.
     """
-    version = raw.get("schema_version", 0)
-
-    # v0 → v1: schema_version field did not exist; structure is identical, just stamp it.
-    if version < 1:
-        raw["schema_version"] = 1
-        version = 1
-
-    # Future: add `if version < 2:` blocks here for each breaking change.
-
+    version = int(raw.get(version_key, 0))
+    for v in range(version + 1, target + 1):
+        step = steps.get(v)
+        if step is not None:
+            raw = step(raw)
+    raw[version_key] = target
     return raw
+
+
+def _subject_v2(raw: dict) -> dict:
+    """v1 -> v2: introduce the machine-written ``task_state`` section (empty container).
+
+    Structural only: earned state (e.g. the sequence task's per-sequence level) is folded in by
+    each task on first run under v2, so task-specific knowledge stays out of core. Existing
+    ``task_overrides`` and every other key are left untouched.
+    """
+    raw.setdefault("task_state", {})
+    return raw
+
+
+# steps[n]: v(n-1) -> vn. v1 (from absent/v0) was a pure version stamp, so no transform.
+_SUBJECT_MIGRATIONS: dict[int, Callable[[dict], dict]] = {2: _subject_v2}
+
+
+def _migrate_subject_config(raw: dict) -> dict:
+    """Upgrade a raw subject-config dict to SUBJECT_CONFIG_SCHEMA_VERSION, losslessly."""
+    return migrate_schema(
+        raw, target=SUBJECT_CONFIG_SCHEMA_VERSION, steps=_SUBJECT_MIGRATIONS
+    )
 
 
 def load_subject_config(

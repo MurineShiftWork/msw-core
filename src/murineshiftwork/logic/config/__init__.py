@@ -20,12 +20,15 @@ from murineshiftwork.logic.config.ini import (  # noqa: F401
 from murineshiftwork.logic.config.io import (  # noqa: F401
     load_setup_config,
     load_subject_config,
+    migrate_schema,
     save_subject_task_overrides,
     save_subject_task_stage_position,
+    save_subject_task_state,
     update_stage_config,
     update_valve_calibration,
 )
 from murineshiftwork.logic.config.models import (  # noqa: F401
+    SUBJECT_CONFIG_SCHEMA_VERSION,
     AxisConfig,
     BpodDevice,
     Calibrations,
