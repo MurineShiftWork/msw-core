@@ -255,6 +255,14 @@ def update_stage_config(
     return True
 
 
+class SchemaVersionError(RuntimeError):
+    """A config's schema version is newer than the running software supports.
+
+    Raised on the forward-incompatible direction (config newer than software). The
+    backward direction (config older than software) is handled by migration, not this error.
+    """
+
+
 def migrate_schema(
     raw: dict,
     *,
@@ -273,8 +281,18 @@ def migrate_schema(
     Generic (no config-type knowledge) so subject / task / setup configs can all reuse it; keep
     the per-step transforms task-agnostic where possible and let each task fold its own legacy
     state in at runtime.
+
+    Forward-incompatibility guard: a dict whose ``version_key`` is **newer** than ``target``
+    (written by newer software) is refused with :class:`SchemaVersionError` rather than silently
+    downgraded - the running software cannot understand a future schema, and re-stamping it down
+    would make a newer config lie about its version. Update the software instead.
     """
     version = int(raw.get(version_key, 0))
+    if version > target:
+        raise SchemaVersionError(
+            f"config {version_key}={version} is newer than this software supports "
+            f"({target}); update the software (a newer schema cannot be safely downgraded)."
+        )
     for v in range(version + 1, target + 1):
         step = steps.get(v)
         if step is not None:

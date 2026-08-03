@@ -1,12 +1,13 @@
 """Subject-config schema migration + the machine-written ``task_state`` section (schema v2).
 
-Covers the generic, lossless ``migrate_schema`` helper and the subject v1->v2 upgrade that adds
-``task_state`` without touching existing values, plus the ``save_subject_task_state`` writer.
-Underpins PLAN_subject_task_state_and_schema_migration.md (Phase 1) and msw-core#35.
+Covers the generic, lossless ``migrate_schema`` helper (incl. the forward-incompatibility
+guard), the subject v1->v2 upgrade that adds ``task_state`` without touching existing values,
+and the ``save_subject_task_state`` writer.
 """
 
 from __future__ import annotations
 
+import pytest
 import yaml
 
 from murineshiftwork.logic.config import (
@@ -157,3 +158,27 @@ def test_save_task_state_round_trips_through_model(tmp_path):
     )
     cfg = load_subject_config(tmp_path, "seq013")
     assert cfg.task_state["sequence"]["sequences"]["default"]["level"] == 4
+
+
+# --------------------------------------------------------------------------- #
+# forward-incompatibility guard (config newer than software)
+
+
+def test_migrate_schema_refuses_newer_than_target():
+    from murineshiftwork.logic.config import SchemaVersionError
+
+    future = {"schema_version": 5, "name": "x", "unknown_future_field": 42}
+    with pytest.raises(SchemaVersionError):
+        migrate_schema(future, target=2, steps={2: lambda r: r})
+
+
+def test_load_subject_config_refuses_future_schema(tmp_path):
+    from murineshiftwork.logic.config import SchemaVersionError
+
+    subjects = tmp_path / "subjects"
+    subjects.mkdir()
+    (subjects / "seq099.yaml").write_text(
+        yaml.safe_dump({"schema_version": 99, "name": "seq099", "task_overrides": {}})
+    )
+    with pytest.raises(SchemaVersionError):
+        load_subject_config(tmp_path, "seq099")
