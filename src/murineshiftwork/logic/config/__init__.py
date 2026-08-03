@@ -18,6 +18,7 @@ from murineshiftwork.logic.config.ini import (  # noqa: F401
     validate_config_file_path,
 )
 from murineshiftwork.logic.config.io import (  # noqa: F401
+    SchemaVersionError,
     load_setup_config,
     load_subject_config,
     migrate_schema,
