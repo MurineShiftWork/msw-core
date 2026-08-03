@@ -7,13 +7,14 @@ task code never branches on camera backend:
     if conductor:
         conductor.start()
         conductor.setup_agents()
-        # After TaskProcess builds session paths AND task code has generated
-        # video_flir paths via generate_session_paths(acq_type="video_flir"):
+        # Build the camera acquisition paths with the backend's own acq_type - do NOT hardcode
+        # video_flir; the backend is setup-dependent (video_rce for the rpi ensemble):
+        #     generate_session_paths(acq_type=conductor.acq_type, linked_to=session_container)
         conductor.initialize_acquisition(
-            acquisition_path=...,  # used by RCE
+            acquisition_path=...,  # used by RCE (relative, for the conductor)
             acquisition_name=...,  # used by RCE
-            acqdir=...,            # used by FLIR: full path to video_flir acq dir
-            basename=...,          # used by FLIR: session_basename of video_flir acq
+            acqdir=...,            # absolute camera acq dir (manifest peer + FLIR)
+            basename=...,          # camera acq session_basename
         )
         conductor.start_preview()
         conductor.start_recording()
@@ -82,6 +83,10 @@ class RceConductorAdapter:
     All rpi_camera_ensemble imports are deferred until start() is called so
     that the package is not required on machines that use FLIR cameras only.
     """
+
+    #: namespace acq_type for this backend; callers use it to name the camera acquisition
+    #: (do NOT hardcode video_flir in tasks - the backend is setup-dependent).
+    acq_type: str = "video_rce"
 
     def __init__(self, ensemble_cfg_file: str, output_dir: str) -> None:
         self._ensemble_cfg_file = ensemble_cfg_file
@@ -180,6 +185,9 @@ class FlirBonsaiClient:
         stop_acquisition()     -> stops subprocesses and waits for clean exit
         stop()                 -> cleanup; safe to call even if never started
     """
+
+    #: namespace acq_type for this backend (see RceConductorAdapter.acq_type).
+    acq_type: str = "video_flir"
 
     def __init__(self, config: CameraConfig, output_dir: str) -> None:
         self._config = config

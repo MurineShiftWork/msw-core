@@ -65,3 +65,12 @@ def test_registration_is_skipped_without_basename(tmp_path):
     client = FlirBonsaiClient(config=None, output_dir=str(tmp_path))
     client.initialize_acquisition(acqdir=str(tmp_path / _FLIR), basename="")
     assert not (tmp_path / "session_manifest.yaml").exists()
+
+
+def test_clients_expose_backend_acq_type():
+    # tasks must name the camera acquisition from the backend, not a hardcoded video_flir
+    assert (
+        RceConductorAdapter(ensemble_cfg_file="c", output_dir="d").acq_type
+        == "video_rce"
+    )
+    assert FlirBonsaiClient(config=None, output_dir="d").acq_type == "video_flir"
