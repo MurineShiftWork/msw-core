@@ -8,13 +8,12 @@ from murineshiftwork.logic.log import patch_logging_levels
 
 
 def _print_run_banner():
-    from importlib.metadata import version as _v
+    from murineshiftwork.logic.versions import msw_version_banner
 
-    try:
-        ver = _v("murineshiftwork")
-    except Exception:
-        ver = "unknown"
-    print(f"msw {ver} | © Lars B. Rollik | PolyForm Internal Use 1.0.0")
+    banner = msw_version_banner()
+    print(banner)
+    # log it too, so the exact software provenance lands in the session log
+    logging.getLogger("murineshiftwork").info("msw packages:\n%s", banner)
 
 
 def run_cli(*args):

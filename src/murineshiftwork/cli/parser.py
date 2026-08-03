@@ -3,7 +3,6 @@ from argparse import (
     ArgumentParser,
     RawDescriptionHelpFormatter,
 )
-from importlib.metadata import version as _get_version
 from textwrap import dedent
 
 from murineshiftwork.cli.config import (
@@ -30,17 +29,11 @@ from murineshiftwork.cli.tasks import (
     run_tasks_list,
     run_tasks_modes,
 )
+from murineshiftwork.logic.versions import msw_version_banner
 
-try:
-    _MSW_VERSION = _get_version("murineshiftwork")
-except Exception:
-    _MSW_VERSION = "unknown"
-
-# Appended to every subparser epilog so the credit line appears on all --help pages.
-_CREDIT_EPILOG = (
-    f"\nmsw {_MSW_VERSION} | © Lars B. Rollik | PolyForm Internal Use 1.0.0\n"
-    "Source: https://github.com/MurineShiftWork/murineshiftwork\n\n"
-)
+# The version/copyright banner now appears ONCE, in the main `msw --help` header (below).
+# Keep the subparser epilog empty so it is not repeated at the foot of every help page.
+_CREDIT_EPILOG = ""
 
 
 class ArgparseFormatter(ArgumentDefaultsHelpFormatter, RawDescriptionHelpFormatter):
@@ -761,8 +754,8 @@ def parse_args(args=None):
     main_parser = ArgumentParser(
         prog="msw",
         description=(
-            "Murine Shift Work (msw): behavioural task acquisition with hardware support.\n"
-            f"Version {_MSW_VERSION} | © Lars B. Rollik | PolyForm Internal Use 1.0.0"
+            "Murine Shift Work (msw): behavioural task acquisition with hardware support.\n\n"
+            + msw_version_banner()
         ),
         epilog=_CREDIT_EPILOG,
         formatter_class=ArgparseFormatter,
@@ -771,8 +764,8 @@ def parse_args(args=None):
         "-v",
         "--version",
         action="version",
-        version=f"msw {_MSW_VERSION}",
-        help="Show version and exit",
+        version=msw_version_banner(),
+        help="Show the installed msw-* package versions and exit",
     )
     sub_parsers = main_parser.add_subparsers(metavar="command", dest="command")
     sub_parsers.required = True
