@@ -109,11 +109,22 @@ class RceConductorAdapter:
             self._conductor.setup_agents()
 
     def initialize_acquisition(
-        self, acquisition_path: str = "", acquisition_name: str = "", **_: Any
+        self,
+        acquisition_path: str = "",
+        acquisition_name: str = "",
+        acqdir: str = "",
+        basename: str = "",
+        **_: Any,
     ) -> None:
-        self._acq_dir = acquisition_path
-        self._basename = acquisition_name
-        _register_camera_peer(acquisition_path, acquisition_name)
+        # The session_manifest is an msw artifact written on THIS machine, so register the
+        # camera peer with the absolute LOCAL acq dir (`acqdir`) and its `basename` - the same
+        # msw-provided paths the FLIR client uses. `acquisition_path`/`acquisition_name` are the
+        # RELATIVE path + name the remote rce conductor records under its own data_dir; they are
+        # for the conductor only (registering with them wrote the manifest to a bogus
+        # CWD-relative path).
+        self._acq_dir = acqdir
+        self._basename = basename
+        _register_camera_peer(acqdir, basename)
         if self._conductor is not None:
             self._conductor.initialize_acquisition(
                 acquisition_path=acquisition_path,
