@@ -10,10 +10,12 @@ from murineshiftwork.logic.versions import (
 def test_lists_msw_packages_main_first():
     pkgs = msw_installed_versions()
     names = [n for n, _ in pkgs]
-    assert names[0] == "murineshiftwork"  # umbrella first
-    assert "msw-core" in names
+    assert "msw-core" in names  # the package under test is always present
     assert all(n == "murineshiftwork" or n.startswith("msw-") for n in names)
     assert all(v for _, v in pkgs)  # every entry has a version
+    # the umbrella isn't installed in msw-core's own CI; when it IS, it sorts first
+    if "murineshiftwork" in names:
+        assert names[0] == "murineshiftwork"
 
 
 def test_banner_has_versions_and_copyright():
