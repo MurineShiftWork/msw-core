@@ -6,7 +6,10 @@ from argparse import (
 from importlib.metadata import version as _get_version
 from textwrap import dedent
 
-from murineshiftwork.cli.config import run_config_upgrade
+from murineshiftwork.cli.config import (
+    run_config_migrate_subjects,
+    run_config_upgrade,
+)
 from murineshiftwork.cli.defaults import (
     available_tasks,
     default_config_dir,
@@ -655,6 +658,17 @@ def make_subparser_config(sub_parsers):
     pu.add_argument("--yes", action="store_true", help="Apply without confirmation")
     pu.add_argument("-cd", "--config-dir", type=str, default="", dest="config_dir")
     pu.set_defaults(func=run_config_upgrade)
+
+    pm = sub.add_parser(
+        "migrate-subjects",
+        help="Upgrade every subject config to the current schema (adds task_state; "
+        "seeds the sequence level from start_level)",
+    )
+    pm.add_argument(
+        "--dry-run", action="store_true", dest="dry_run", help="Preview without writing"
+    )
+    pm.add_argument("-cd", "--config-dir", type=str, default="", dest="config_dir")
+    pm.set_defaults(func=run_config_migrate_subjects)
 
 
 def make_subparser_tasks(sub_parsers):

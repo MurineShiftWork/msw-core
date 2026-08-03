@@ -139,3 +139,83 @@ def run_config_upgrade(
     print(f"\n{verb} {changed} overlay(s).")
     if dry_run:
         print("Dry-run: re-run without --dry-run (add --yes to skip confirmation).")
+
+
+def _migrate_one_subject(path: Path, dry_run: bool, ts: str) -> int:
+    """Migrate one subject YAML to the current schema in place. Returns 1 if (would be) changed.
+
+    Upgrades the schema (v1 -> v2 adds the ``task_state`` container) and seeds the sequence
+    task's earned level: ``task_overrides.sequence.start_level`` ->
+    ``task_state.sequence.sequences.default.level`` (start_level is the most-recent earned level
+    from the retired writeback; the machine-local level JSON is intentionally NOT read here). A
+    timestamped ``.bak`` is written before any change.
+    """
+    import copy
+
+    from murineshiftwork.logic.config.io import (
+        SchemaVersionError,
+        _migrate_subject_config,
+    )
+
+    raw = yaml.safe_load(path.read_text()) or {}
+    before = raw.get("schema_version", 0)
+    try:
+        migrated = _migrate_subject_config(copy.deepcopy(raw))
+    except SchemaVersionError as exc:
+        print(f"  skip  {path.name}  ({exc})")
+        return 0
+
+    # Sequence level seed (only for subjects that carry a sequence start_level).
+    start_level = ((migrated.get("task_overrides") or {}).get("sequence") or {}).get(
+        "start_level"
+    )
+    seqs = (
+        migrated.setdefault("task_state", {})
+        .setdefault("sequence", {})
+        .setdefault("sequences", {})
+    )
+    seeded = False
+    if start_level is not None and "default" not in seqs:
+        seqs["default"] = {"level": int(start_level), "updated": ts}
+        seeded = True
+    if not seqs:  # nothing seeded -> drop the empty scaffold we just created
+        migrated.get("task_state", {}).pop("sequence", None)
+
+    if migrated == raw:
+        return 0
+    note = f", seed sequence level={start_level}" if seeded else ""
+    print(f"  {path.name}: schema v{before} -> v{migrated['schema_version']}{note}")
+    if not dry_run:
+        path.with_name(f"{path.name}.bak.{ts}").write_text(path.read_text())
+        path.write_text(
+            yaml.safe_dump(
+                migrated, default_flow_style=False, allow_unicode=True, sort_keys=False
+            )
+        )
+    return 1
+
+
+def run_config_migrate_subjects(
+    config_dir: str = "", dry_run: bool = False, **kwargs
+) -> None:
+    """Handler for ``msw config migrate-subjects`` - batch-upgrade subject configs in place."""
+    cfg = resolve_config_dir(cli_override=config_dir)
+    if not cfg:
+        print(
+            "Error: config_dir not set. Run 'msw init <config_dir>' first or pass -cd.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    subjects_dir = Path(cfg) / "subjects"
+    files = sorted(subjects_dir.glob("*.yaml")) if subjects_dir.is_dir() else []
+    if not files:
+        print(f"No subject configs under {subjects_dir}.")
+        return
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    changed = sum(_migrate_one_subject(f, dry_run, ts) for f in files)
+    verb = "would migrate" if dry_run else "migrated"
+    print(f"\n{verb} {changed}/{len(files)} subject config(s).")
+    if dry_run:
+        print(
+            "Dry-run: re-run without --dry-run to apply (a .bak is written per file)."
+        )
