@@ -25,6 +25,7 @@ from murineshiftwork.logic.config.io import (  # noqa: F401
     save_subject_task_overrides,
     save_subject_task_stage_position,
     save_subject_task_state,
+    subject_config_schema_version,
     update_stage_config,
     update_valve_calibration,
 )

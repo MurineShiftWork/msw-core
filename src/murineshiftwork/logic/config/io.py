@@ -323,6 +323,23 @@ def _migrate_subject_config(raw: dict) -> dict:
     )
 
 
+def subject_config_schema_version(
+    config_dir: str | Path, subject_name: str
+) -> int | None:
+    """On-disk ``schema_version`` of a subject config, without migrating it.
+
+    Returns ``None`` if the file does not exist (new subject / INI fallback), else the raw
+    integer (0 when the stamp is absent = legacy). Lets a caller decide to refuse a legacy
+    config and point the operator at ``msw config migrate-subjects`` rather than silently
+    coping with it.
+    """
+    path = Path(config_dir) / "subjects" / f"{subject_name}.yaml"
+    if not path.exists():
+        return None
+    with path.open() as f:
+        return int((yaml.safe_load(f) or {}).get("schema_version", 0))
+
+
 def load_subject_config(
     config_dir: str | Path, subject_name: str
 ) -> SubjectConfig | None:
