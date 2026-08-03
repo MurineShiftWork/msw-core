@@ -40,13 +40,21 @@ def test_flir_client_registers_and_finalizes_peer(tmp_path):
 
 
 def test_rce_adapter_registers_and_finalizes_peer(tmp_path):
+    # The manifest is registered with the msw-provided ABSOLUTE acq dir + basename (like FLIR),
+    # so its container == the framework's session container. The RELATIVE acquisition_path is for
+    # the conductor only and must NOT drive the (local) manifest path.
     acqdir = tmp_path / _RCE
     acqdir.mkdir()
     adapter = RceConductorAdapter(
         ensemble_cfg_file="cfg.yaml", output_dir=str(tmp_path)
     )
 
-    adapter.initialize_acquisition(acquisition_path=str(acqdir), acquisition_name=_RCE)
+    adapter.initialize_acquisition(
+        acquisition_path="rel/only/for/conductor",  # relative; must be ignored by the manifest
+        acquisition_name="conductor_name",
+        acqdir=str(acqdir),
+        basename=_RCE,
+    )
     assert _acquisitions(tmp_path)[_RCE]["status"] == "running"
 
     adapter.stop_acquisition()  # conductor is None; must still finalize
