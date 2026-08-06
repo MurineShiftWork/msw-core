@@ -43,6 +43,21 @@ from murineshiftwork.logic.paths import test_path_is_writable
 from murineshiftwork.logic.reward_metadata import build_reward_metadata
 
 
+def _resolve_hook_setup(run_context, execution_config):
+    """The resolved ``SetupConfig`` for hook collection.
+
+    Prefers the typed ``RunContext`` (spine refactor); falls back to the legacy
+    ``execution_config`` bundle when a caller has not threaded the context through. Both hold the
+    same ``SetupConfig`` instance, so the two paths are equivalent. Returns ``None`` if neither is
+    present.
+    """
+    if run_context is not None:
+        return run_context.setup
+    if execution_config is not None:
+        return execution_config.setup
+    return None
+
+
 def _strip_unserializable(obj):
     """Recursively remove callables and other non-YAML-safe objects from dicts/lists."""
     if isinstance(obj, dict):
@@ -290,8 +305,11 @@ class TaskProcess:
         # Build hook context and load hooks (after bpod is connected)
         _task_settings = self.input_kwargs.get("settings.task.patched", {})
         _execution_config = self.input_kwargs.get("execution_config")
-        _setup_config = (
-            _execution_config.setup if _execution_config is not None else None
+        # Read the resolved setup from the typed RunContext (spine refactor), falling back to the
+        # legacy execution_config bundle. The HookContext still receives execution_config for hooks
+        # that read it (migrated in a later phase).
+        _setup_config = _resolve_hook_setup(
+            self.input_kwargs.get("run_context"), _execution_config
         )
         self._hook_ctx = HookContext(
             subject=self.subject,
