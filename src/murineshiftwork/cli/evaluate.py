@@ -31,6 +31,7 @@ from murineshiftwork.logic.config import (
 from murineshiftwork.logic.log import setup_logging
 from murineshiftwork.logic.machine_config import resolve_config_dir, resolve_data_dir
 from murineshiftwork.logic.paths import get_host_ip, get_host_name
+from murineshiftwork.logic.run_context import RunContext
 from murineshiftwork.logic.task_settings import build_task_settings
 
 # Re-export for anything that imported these from here before the split
@@ -590,6 +591,10 @@ def evaluate_args(args_dict=None):
         task_name=task_name,
         task_settings=patched,
     )
+    # Phase 1 (spine refactor): typed run context, dual-carrier - built from the resolved
+    # args_dict and stashed alongside it. Nothing reads it yet; execute/TaskProcess migrate
+    # onto it in later phases. See docs/plans/PLAN_msw_core_spine_refactor.md.
+    args_dict["run_context"] = RunContext.from_args_dict(args_dict)
 
     if args_dict.get("command") == "run":
         preflight_hardware_check(args_dict)
