@@ -21,7 +21,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from murineshiftwork.logic.config import SetupConfig, SubjectConfig
+from murineshiftwork.logic.config import ExecutionConfig, SetupConfig, SubjectConfig
 
 
 class DevicePorts(BaseModel):
@@ -105,3 +105,19 @@ class RunContext(BaseModel):
             "serial_port_scale": self.ports.scale,
             "serial_port_pulsepal": self.ports.pulsepal,
         }
+
+    def to_execution_config(self) -> ExecutionConfig:
+        """Derive the ``ExecutionConfig`` bundle from this context.
+
+        ``ExecutionConfig`` is the resolved setup/subject/task bundle that ``TaskProcess`` and the
+        ``HookContext`` still consume. RunContext already carries those fields, so it is now the
+        single source and ExecutionConfig is a projection of it rather than an independently-built
+        object (evaluate_args no longer constructs one directly). It stays until those consumers
+        migrate to reading RunContext, then it can be retired.
+        """
+        return ExecutionConfig(
+            setup=self.setup,
+            subject=self.subject_config,
+            task_name=self.task_name,
+            task_settings=self.task_settings,
+        )

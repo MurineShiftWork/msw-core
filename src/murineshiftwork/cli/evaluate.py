@@ -19,7 +19,6 @@ from murineshiftwork.cli.tasks import (
     validate_task_yaml,
 )
 from murineshiftwork.logic.config import (
-    ExecutionConfig,
     deep_merge,
     load_setup_config,
     load_subject_config,
@@ -584,17 +583,14 @@ def evaluate_args(args_dict=None):
     setup_config = args_dict.get("setup_config")
     _resolve_setup_config_ports(args_dict, setup_config, patched)
     _resolve_host_session(args_dict)
-    subject_config = args_dict.get("subject_config")
-    args_dict["execution_config"] = ExecutionConfig(
-        setup=setup_config,
-        subject=subject_config,
-        task_name=task_name,
-        task_settings=patched,
-    )
-    # Phase 1 (spine refactor): typed run context, dual-carrier - built from the resolved
-    # args_dict and stashed alongside it. Nothing reads it yet; execute/TaskProcess migrate
-    # onto it in later phases. See docs/plans/PLAN_msw_core_spine_refactor.md.
-    args_dict["run_context"] = RunContext.from_args_dict(args_dict)
+    # Typed run context (spine refactor) is the single source for the resolved run: build it
+    # from args_dict, then DERIVE the ExecutionConfig bundle from it rather than constructing a
+    # second overlapping object. execute/TaskProcess migrate onto RunContext in later phases;
+    # ExecutionConfig stays until its consumers (TaskProcess, HookContext) do. See
+    # docs/plans/PLAN_msw_core_spine_refactor.md.
+    run_context = RunContext.from_args_dict(args_dict)
+    args_dict["run_context"] = run_context
+    args_dict["execution_config"] = run_context.to_execution_config()
 
     if args_dict.get("command") == "run":
         preflight_hardware_check(args_dict)
