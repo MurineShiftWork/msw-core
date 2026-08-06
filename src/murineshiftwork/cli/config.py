@@ -25,7 +25,14 @@ from murineshiftwork.cli.tasks import (
     find_task_by_name,
 )
 from murineshiftwork.logic.config.ini import deep_merge
-from murineshiftwork.logic.machine_config import resolve_config_dir
+from murineshiftwork.logic.machine_config import (
+    get_machine_config_path,
+    read_open_ephys_url,
+    read_ui_url,
+    resolve_config_dir,
+    resolve_config_dir_with_source,
+    resolve_data_dir,
+)
 
 
 def _missing_key_paths(bundled: dict, overlay: dict, prefix: str = "") -> list[str]:
@@ -219,3 +226,36 @@ def run_config_migrate_subjects(
         print(
             "Dry-run: re-run without --dry-run to apply (a .bak is written per file)."
         )
+
+
+def run_config_show(config_dir: str = "", **kwargs) -> None:
+    """Handler for ``msw config show`` - print how the config/data paths currently resolve.
+
+    Shows the effective ``config_dir`` *and which layer set it* (CLI > env > machine config >
+    default), the overlay sub-dirs under it with their YAML counts, plus the resolved data dir
+    and service URLs - so an operator can confirm a setup's paths without guessing.
+    """
+    mc_path = get_machine_config_path()
+    cfg, source = resolve_config_dir_with_source(cli_override=config_dir)
+
+    print(
+        f"machine config : {mc_path} "
+        f"({'exists' if mc_path.exists() else 'not present'})"
+    )
+    if cfg:
+        state = "ok" if Path(cfg).is_dir() else "MISSING"
+        print(f"config_dir     : {cfg}  [{source}]  {state}")
+        for sub in ("setups", "subjects", "tasks"):
+            d = Path(cfg) / sub
+            n = len(list(d.glob("*.yaml"))) if d.is_dir() else 0
+            print(f"  {sub:<8}     : {d}  ({n} yaml)")
+    else:
+        print(
+            "config_dir     : <unset> - run 'msw init <config_dir>', set MSW_CONFIG_DIR, "
+            "or pass -cd"
+        )
+    # resolve_data_dir's override is the --out-path/data dir, NOT config_dir; show the
+    # machine-resolved default here (no data override is passed to `config show`).
+    print(f"data_dir       : {resolve_data_dir()}")
+    print(f"ui_url         : {read_ui_url()}")
+    print(f"open_ephys_url : {read_open_ephys_url()}")
