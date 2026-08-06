@@ -331,14 +331,35 @@ def _inject_valve_calibration(setup_config, patched) -> None:
     logging.debug("Injected valve_s_for_ul from SetupConfig into task settings")
 
 
+def _apply_device_port(
+    setup_config, args_dict, patched, device: str, *, set_patched: bool
+) -> ValueError | None:
+    """Resolve one device's serial port from SetupConfig into ``args_dict`` (and ``patched``).
+
+    On success sets ``serial_port_{device}`` (and mirrors into ``patched`` when ``set_patched``)
+    and returns ``None``. On failure sets nothing (the CLI value is left in place) and returns the
+    ``ValueError`` so the caller can emit its device-specific warning and do any cleanup - the
+    per-device warning text and fallbacks stay with the caller.
+    """
+    key = f"serial_port_{device}"
+    try:
+        resolved = setup_config.device_port(device)
+    except ValueError as exc:
+        return exc
+    args_dict[key] = resolved
+    if set_patched:
+        patched[key] = resolved
+    logging.debug(f"Resolved {device} port from SetupConfig: {resolved}")
+    return None
+
+
 def _resolve_setup_config_ports(args_dict, setup_config, patched):
     """Apply port and camera overrides from SetupConfig into args_dict and patched."""
     if setup_config and "bpod" in setup_config.devices:
-        try:
-            resolved = setup_config.device_port("bpod")
-            args_dict["serial_port_bpod"] = resolved
-            logging.debug(f"Resolved bpod port from SetupConfig: {resolved}")
-        except ValueError as exc:
+        exc = _apply_device_port(
+            setup_config, args_dict, patched, "bpod", set_patched=False
+        )
+        if exc:
             logging.warning(
                 f"SetupConfig bpod port resolution failed ({exc}); "
                 f"using CLI value {args_dict['serial_port_bpod']!r}"
@@ -346,12 +367,10 @@ def _resolve_setup_config_ports(args_dict, setup_config, patched):
 
     if setup_config and "stage" in setup_config.devices:
         stage_dev = setup_config.devices["stage"]
-        try:
-            resolved_stage = setup_config.device_port("stage")
-            args_dict["serial_port_stage"] = resolved_stage
-            patched["serial_port_stage"] = resolved_stage
-            logging.debug(f"Resolved stage port from SetupConfig: {resolved_stage}")
-        except ValueError as exc:
+        exc = _apply_device_port(
+            setup_config, args_dict, patched, "stage", set_patched=True
+        )
+        if exc:
             logging.warning(f"SetupConfig stage port resolution failed ({exc})")
         # Always prefer setup config axes over old calibration files
         args_dict["settings.stage"] = _stage_device_to_controller_config(stage_dev)
@@ -360,12 +379,10 @@ def _resolve_setup_config_ports(args_dict, setup_config, patched):
 
     if setup_config and "scale" in setup_config.devices:
         scale_dev = setup_config.devices["scale"]
-        try:
-            resolved_scale = setup_config.device_port("scale")
-            args_dict["serial_port_scale"] = resolved_scale
-            patched["serial_port_scale"] = resolved_scale
-            logging.debug(f"Resolved scale port from SetupConfig: {resolved_scale}")
-        except ValueError as exc:
+        exc = _apply_device_port(
+            setup_config, args_dict, patched, "scale", set_patched=True
+        )
+        if exc:
             logging.warning(
                 f"SetupConfig scale port resolution failed ({exc}); "
                 f"using CLI value {args_dict['serial_port_scale']!r}"
@@ -379,12 +396,10 @@ def _resolve_setup_config_ports(args_dict, setup_config, patched):
         patched["scale_type"] = scale_type
 
     if setup_config and "pulsepal" in setup_config.devices:
-        try:
-            resolved_pp = setup_config.device_port("pulsepal")
-            args_dict["serial_port_pulsepal"] = resolved_pp
-            patched["serial_port_pulsepal"] = resolved_pp
-            logging.debug(f"Resolved pulsepal port from SetupConfig: {resolved_pp}")
-        except ValueError as exc:
+        exc = _apply_device_port(
+            setup_config, args_dict, patched, "pulsepal", set_patched=True
+        )
+        if exc:
             logging.warning(
                 f"SetupConfig pulsepal port resolution failed ({exc}); skipping pulsepal"
             )
