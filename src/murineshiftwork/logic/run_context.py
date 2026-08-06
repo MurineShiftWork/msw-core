@@ -32,6 +32,14 @@ class DevicePorts(BaseModel):
     scale: str = ""
     pulsepal: str = ""
 
+    def get(self, device: str) -> str:
+        """Port for *device*, or ``""`` if there is no such field.
+
+        Mirrors the old ``args_dict.get(f"serial_port_{device}", "")`` lookup so a device whose
+        type has no dedicated port field degrades to empty exactly as before.
+        """
+        return getattr(self, device) if device in type(self).model_fields else ""
+
 
 class RunContext(BaseModel):
     """Typed, resolved description of one run (subject + task + setup + ports + settings).
