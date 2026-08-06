@@ -24,9 +24,14 @@ from murineshiftwork.cli.tasks import (
     _task_yaml_path,
     find_task_by_name,
 )
+from murineshiftwork.logic.config import (
+    load_setup_config,
+    load_subject_config,
+)
 from murineshiftwork.logic.config.ini import deep_merge
 from murineshiftwork.logic.machine_config import (
     get_machine_config_path,
+    read_machine_config,
     read_open_ephys_url,
     read_ui_url,
     resolve_config_dir,
@@ -228,16 +233,85 @@ def run_config_migrate_subjects(
         )
 
 
-def run_config_show(config_dir: str = "", **kwargs) -> None:
-    """Handler for ``msw config show`` - print how the config/data paths currently resolve.
+def _dump_yaml(title: str, path: Path, data: dict) -> None:
+    print(f"# {title}: {path}")
+    print(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), end="")
 
-    Shows the effective ``config_dir`` *and which layer set it* (CLI > env > machine config >
-    default), the overlay sub-dirs under it with their YAML counts, plus the resolved data dir
-    and service URLs - so an operator can confirm a setup's paths without guessing.
+
+def _show_named_config(cfg: str, kind: str, name: str, raw: bool) -> None:
+    """Render one subject/setup/task config as YAML (resolved by default, on-disk with --raw)."""
+    if kind in ("subject", "setup"):
+        sub, loader = (
+            ("subjects", load_subject_config)
+            if kind == "subject"
+            else ("setups", load_setup_config)
+        )
+        path = Path(cfg) / sub / f"{name}.yaml"
+        if not path.exists():
+            print(f"No {kind} config at {path}", file=sys.stderr)
+            sys.exit(1)
+        if raw:
+            print(f"# {kind} (on disk): {path}")
+            print(path.read_text(), end="")
+            return
+        obj = loader(cfg, name)
+        if obj is None:
+            print(f"Could not load {kind} config {name}", file=sys.stderr)
+            sys.exit(1)
+        _dump_yaml(f"{kind} (resolved)", path, obj.model_dump(mode="json"))
+        return
+
+    # task: prefer the config-dir overlay (what the operator edits); fall back to bundled.
+    overlay = Path(cfg) / "tasks" / name / "task.yaml"
+    if overlay.exists():
+        src, label = overlay, "task overlay"
+    else:
+        try:
+            src, label = _task_yaml_path(name), "task (bundled default)"
+        except Exception:
+            print(
+                f"No task overlay at {overlay} and no bundled task '{name}'",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    print(f"# {label}: {src}")
+    print(src.read_text(), end="")
+
+
+def run_config_show(
+    config_dir: str = "", kind: str = "", name: str = "", raw: bool = False, **kwargs
+) -> None:
+    """Handler for ``msw config show``.
+
+    With no target: print how the config/data paths resolve - the effective ``config_dir``
+    *and which layer set it* (CLI > env > machine config > default), the overlay sub-dirs with
+    their YAML counts, the resolved data dir + service URLs, and the main machine config body.
+    With ``subject|setup|task <name>``: print that config as YAML (resolved/validated; ``--raw``
+    shows the on-disk file instead). So an operator can inspect any config without guessing.
     """
-    mc_path = get_machine_config_path()
     cfg, source = resolve_config_dir_with_source(cli_override=config_dir)
 
+    if kind:
+        if kind not in ("subject", "setup", "task"):
+            print(
+                f"Error: unknown kind '{kind}' (use subject | setup | task).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not name:
+            print(f"Error: 'msw config show {kind}' needs a name.", file=sys.stderr)
+            sys.exit(1)
+        if not cfg:
+            print(
+                "Error: config_dir not set. Run 'msw init <config_dir>', set MSW_CONFIG_DIR, "
+                "or pass -cd.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        _show_named_config(cfg, kind, name, raw)
+        return
+
+    mc_path = get_machine_config_path()
     print(
         f"machine config : {mc_path} "
         f"({'exists' if mc_path.exists() else 'not present'})"
@@ -259,3 +333,8 @@ def run_config_show(config_dir: str = "", **kwargs) -> None:
     print(f"data_dir       : {resolve_data_dir()}")
     print(f"ui_url         : {read_ui_url()}")
     print(f"open_ephys_url : {read_open_ephys_url()}")
+
+    mc = read_machine_config()
+    if mc:
+        print()
+        _dump_yaml("machine config (main)", mc_path, mc)
