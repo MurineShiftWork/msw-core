@@ -45,6 +45,25 @@ def test_device_ports_get_mirrors_serial_port_lookup():
     assert ports.get("camera") == ""
 
 
+def test_to_execution_config_projects_the_bundle():
+    from murineshiftwork.logic.config import ExecutionConfig, SubjectConfig
+
+    subj = SubjectConfig(name="seq001")
+    ctx = RunContext.from_args_dict(
+        {
+            "task": "sequence",
+            "subject_config": subj,
+            "settings.task.patched": {"start_level": 7},
+        }
+    )
+    ec = ctx.to_execution_config()
+    assert isinstance(ec, ExecutionConfig)
+    assert ec.task_name == "sequence"
+    assert ec.subject is subj  # same instance (pydantic revalidate_instances='never')
+    assert ec.task_settings == {"start_level": 7}
+    assert ec.setup is None
+
+
 def test_from_args_dict_tolerates_empty_dict():
     ctx = RunContext.from_args_dict({})
     assert ctx.command == "" and ctx.task_name == ""
