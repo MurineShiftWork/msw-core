@@ -62,31 +62,42 @@ def _load_machine_config() -> dict:
     return {}
 
 
+def resolve_config_dir_with_source(cli_override: str = "") -> tuple[str, str]:
+    """Return ``(config_dir, source)`` where ``source`` names the winning layer.
+
+    The single definition of the config-dir priority chain; ``resolve_config_dir`` and
+    ``msw config show`` both read it so the reported source can never drift from the value
+    actually used. ``source`` is a human-readable label; ``config_dir`` is ``""`` if nothing
+    is set.
+    """
+    # 1. CLI explicit override
+    if cli_override and not cli_override.startswith("unknown_"):
+        return cli_override, "--config-dir (CLI)"
+
+    # 2. Environment variable
+    env = os.environ.get("MSW_CONFIG_DIR", "").strip()
+    if env:
+        return env, "MSW_CONFIG_DIR (env)"
+
+    # 3. Machine config file
+    mc = _load_machine_config()
+    if mc.get("config_dir"):
+        return str(mc["config_dir"]), f"{_MACHINE_CONFIG_FILE.name} (config_dir)"
+
+    # 4. Historical default
+    if _HISTORICAL_DEFAULT.exists():
+        return str(_HISTORICAL_DEFAULT), "historical default"
+
+    return "", "unset"
+
+
 def resolve_config_dir(cli_override: str = "") -> str:
     """Return the config dir to use, applying the priority chain.
 
     Args:
         cli_override: value of --config-dir from CLI (empty string = not set).
     """
-    # 1. CLI explicit override
-    if cli_override and not cli_override.startswith("unknown_"):
-        return cli_override
-
-    # 2. Environment variable
-    env = os.environ.get("MSW_CONFIG_DIR", "").strip()
-    if env:
-        return env
-
-    # 3. Machine config file
-    mc = _load_machine_config()
-    if mc.get("config_dir"):
-        return str(mc["config_dir"])
-
-    # 4. Historical default
-    if _HISTORICAL_DEFAULT.exists():
-        return str(_HISTORICAL_DEFAULT)
-
-    return ""
+    return resolve_config_dir_with_source(cli_override)[0]
 
 
 def write_machine_config(config_dir: str | Path, **extra_fields) -> None:

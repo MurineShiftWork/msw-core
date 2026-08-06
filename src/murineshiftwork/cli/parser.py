@@ -7,6 +7,7 @@ from textwrap import dedent
 
 from murineshiftwork.cli.config import (
     run_config_migrate_subjects,
+    run_config_show,
     run_config_upgrade,
 )
 from murineshiftwork.cli.defaults import (
@@ -615,6 +616,8 @@ def make_subparser_config(sub_parsers):
             Config overlay management.
 
             Commands:
+              msw config show                  Paths + the main machine config
+              msw config show subject <name>   Show a resolved subject/setup/task config
               msw config upgrade task <name>   Add new bundled-default keys to a task overlay
               msw config upgrade --all         Upgrade every task overlay in the config dir
 
@@ -631,6 +634,25 @@ def make_subparser_config(sub_parsers):
     )
     sub = p.add_subparsers(metavar="subcommand", dest="subcommand")
     sub.required = True
+    psh = sub.add_parser(
+        "show",
+        help="Print resolved config/data paths, the main config, or a named "
+        "subject/setup/task config",
+    )
+    psh.add_argument(
+        "kind",
+        nargs="?",
+        default="",
+        help="subject | setup | task (omit for the path/main-config summary)",
+    )
+    psh.add_argument("name", nargs="?", default="", help="Config name (with a kind)")
+    psh.add_argument(
+        "--raw",
+        action="store_true",
+        help="Show the on-disk file instead of the resolved/validated config",
+    )
+    psh.add_argument("-cd", "--config-dir", type=str, default="", dest="config_dir")
+    psh.set_defaults(func=run_config_show)
     pu = sub.add_parser(
         "upgrade", help="Add new bundled-default keys to config overlays"
     )
