@@ -35,6 +35,16 @@ def test_from_args_dict_extracts_scalars_and_ports():
     assert ctx.task_settings == {"start_level": 7}
 
 
+def test_device_ports_get_mirrors_serial_port_lookup():
+    ports = DevicePorts(bpod="/dev/b", pulsepal="/dev/p")
+    # known fields resolve; unknown device types degrade to "" (like args_dict.get default)
+    assert ports.get("bpod") == "/dev/b"
+    assert ports.get("pulsepal") == "/dev/p"
+    assert ports.get("stage") == ""  # field exists, unset
+    assert ports.get("stage_tower") == ""  # no such field
+    assert ports.get("camera") == ""
+
+
 def test_from_args_dict_tolerates_empty_dict():
     ctx = RunContext.from_args_dict({})
     assert ctx.command == "" and ctx.task_name == ""

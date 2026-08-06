@@ -12,6 +12,7 @@ from murineshiftwork.logic.machine_config import (
     write_machine_config,
 )
 from murineshiftwork.logic.misc import print_box
+from murineshiftwork.logic.run_context import RunContext
 
 
 def _make_bpod(port: str) -> Any:
@@ -83,14 +84,19 @@ def run_task(**args_dict):
     task_name = args_dict["task"]
     mod = importlib.import_module(f"murineshiftwork.tasks.{task_name}.task")
 
-    serial_port = args_dict.get("serial_port_bpod", "")
-    if serial_port and not args_dict.get("simulate") and not args_dict.get("bpod"):
+    # First consumer of the typed run context (spine refactor, Phase 2): the device-list build
+    # reads RunContext fields instead of the untyped args_dict keys. Fall back to building one if
+    # evaluate_args did not (e.g. a direct call), so behaviour is identical either way. The task
+    # boundary below still receives the full **args_dict.
+    ctx = args_dict.get("run_context") or RunContext.from_args_dict(args_dict)
+
+    serial_port = ctx.ports.bpod
+    if serial_port and not ctx.simulate and not args_dict.get("bpod"):
         from murineshiftwork.hardware.manager import HardwareManager
 
-        setup_config = args_dict.get("setup_config")
+        setup_config = ctx.setup
         if setup_config is not None:
-            patched = args_dict.get("settings.task.patched", {})
-            required = set(patched.get("required_devices") or ["bpod"])
+            required = set(ctx.task_settings.get("required_devices") or ["bpod"])
             device_list = []
             for dev_name, dev_cfg in setup_config.devices.items():
                 if dev_name not in required:
@@ -103,7 +109,7 @@ def run_task(**args_dict):
                         dev_name,
                     )
                     continue
-                port = args_dict.get(f"serial_port_{dev_cfg.type}", "")
+                port = ctx.ports.get(dev_cfg.type)
                 if port:
                     device_list.append(factory(port))
         else:
