@@ -16,7 +16,31 @@ from murineshiftwork.logic.config import (
     migrate_schema,
     save_subject_task_state,
 )
-from murineshiftwork.logic.config.io import _migrate_subject_config
+from murineshiftwork.logic.config.io import (
+    _load_or_seed_subject,
+    _migrate_subject_config,
+)
+
+
+def test_load_or_seed_subject_seeds_v2_skeleton_when_absent(tmp_path):
+    path, raw = _load_or_seed_subject(tmp_path, "newsub")
+    assert path == tmp_path / "subjects" / "newsub.yaml"
+    assert raw["schema_version"] == SUBJECT_CONFIG_SCHEMA_VERSION
+    assert raw["name"] == "newsub"
+    assert raw["task_overrides"] == {}
+    assert "task_state" not in raw  # state writer adds it via setdefault
+
+
+def test_load_or_seed_subject_loads_and_migrates_when_present(tmp_path):
+    (tmp_path / "subjects").mkdir()
+    (tmp_path / "subjects" / "old.yaml").write_text(
+        yaml.safe_dump({"name": "old", "task_overrides": {"seq": {"start_level": 3}}})
+    )
+    _, raw = _load_or_seed_subject(tmp_path, "old")
+    assert raw["schema_version"] == SUBJECT_CONFIG_SCHEMA_VERSION  # migrated
+    assert raw["task_state"] == {}  # v1->v2 added the container
+    assert raw["task_overrides"]["seq"]["start_level"] == 3  # preserved
+
 
 # --------------------------------------------------------------------------- #
 # generic migrate_schema helper

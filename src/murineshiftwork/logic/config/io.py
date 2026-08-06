@@ -106,20 +106,16 @@ def update_valve_calibration(
     return True
 
 
-def save_subject_task_overrides(
-    config_dir: str | Path,
-    subject_name: str,
-    task_name: str,
-    overrides: dict,
-) -> None:
-    """Merge *overrides* into subject's task_overrides[task_name].
+def _load_or_seed_subject(
+    config_dir: str | Path, subject_name: str
+) -> tuple[Path, dict]:
+    """Return ``(path, raw)`` for a subject YAML: load+migrate if present, else seed a v2 skeleton.
 
-    Creates the subjects YAML file if it doesn't exist.
-    Merges into existing task_overrides without overwriting other keys.
-    Typical callers:
-      - stage writeback: overrides={"stage_position": "mouse_t001"}
-      - sequence level writeback: overrides={"start_level": 7}
-      - mode writeback: overrides={"task_mode": "stage10deterministic"}
+    Shared by the subject writers (``save_subject_task_overrides`` /
+    ``save_subject_task_state``). Ensures the subjects dir exists, stamps the current schema
+    version, and leaves the caller to add its own section (``task_overrides`` / ``task_state``) -
+    the seed deliberately carries only the common skeleton (``task_state`` is added by the state
+    writer via ``setdefault``, so both writers produce identical output to before).
     """
     subjects_dir = Path(config_dir) / "subjects"
     subjects_dir.mkdir(parents=True, exist_ok=True)
@@ -142,6 +138,25 @@ def save_subject_task_overrides(
         }
 
     raw["schema_version"] = SUBJECT_CONFIG_SCHEMA_VERSION
+    return path, raw
+
+
+def save_subject_task_overrides(
+    config_dir: str | Path,
+    subject_name: str,
+    task_name: str,
+    overrides: dict,
+) -> None:
+    """Merge *overrides* into subject's task_overrides[task_name].
+
+    Creates the subjects YAML file if it doesn't exist.
+    Merges into existing task_overrides without overwriting other keys.
+    Typical callers:
+      - stage writeback: overrides={"stage_position": "mouse_t001"}
+      - sequence level writeback: overrides={"start_level": 7}
+      - mode writeback: overrides={"task_mode": "stage10deterministic"}
+    """
+    path, raw = _load_or_seed_subject(config_dir, subject_name)
     raw.setdefault("task_overrides", {}).setdefault(task_name, {}).update(overrides)
 
     with path.open("w") as f:
@@ -180,28 +195,7 @@ def save_subject_task_state(
     """
     from murineshiftwork.logic.config import deep_merge
 
-    subjects_dir = Path(config_dir) / "subjects"
-    subjects_dir.mkdir(parents=True, exist_ok=True)
-    path = subjects_dir / f"{subject_name}.yaml"
-
-    if path.exists():
-        with path.open() as f:
-            raw = yaml.safe_load(f) or {}
-        raw = _migrate_subject_config(raw)
-    else:
-        raw = {
-            "schema_version": SUBJECT_CONFIG_SCHEMA_VERSION,
-            "name": subject_name,
-            "registered": "",
-            "project": "",
-            "experiment": "",
-            "comment": "",
-            "aliases": [],
-            "task_overrides": {},
-            "task_state": {},
-        }
-
-    raw["schema_version"] = SUBJECT_CONFIG_SCHEMA_VERSION
+    path, raw = _load_or_seed_subject(config_dir, subject_name)
     task_states = raw.setdefault("task_state", {})
     task_states[task_name] = deep_merge(task_states.get(task_name) or {}, state)
 
