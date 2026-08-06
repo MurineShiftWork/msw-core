@@ -10,6 +10,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+
+class BpodConnectionError(RuntimeError):
+    """The Bpod device could not be opened on its serial port.
+
+    A typed error so callers (CLI, GUI, RPC) can handle a failed connection instead of the
+    library hard-exiting the process. Subclasses ``RuntimeError`` (which ``BpodFactory`` raises)
+    so any existing ``except RuntimeError`` still catches it. Defined here as a plain class - not
+    via the lazy ``_LAZY`` table - so it imports without pulling pybpod-api.
+    """
+
+
 if TYPE_CHECKING:
     from murineshiftwork.hardware.bpod.device import BpodDevice as BpodDevice
     from murineshiftwork.hardware.bpod.factory import BpodFactory as BpodFactory
@@ -35,7 +46,7 @@ _LAZY: dict[str, str] = {
     "make_sma_for_valve_pulse": "murineshiftwork.hardware.bpod.valve",
 }
 
-__all__ = list(_LAZY)
+__all__ = ["BpodConnectionError", *_LAZY]
 
 
 def __getattr__(name: str) -> object:

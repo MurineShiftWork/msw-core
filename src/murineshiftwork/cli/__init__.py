@@ -3,7 +3,7 @@ import sys
 
 from murineshiftwork.cli.evaluate import evaluate_args
 from murineshiftwork.cli.parser import parse_args
-from murineshiftwork.hardware.bpod import patch_user_settings
+from murineshiftwork.hardware.bpod import BpodConnectionError, patch_user_settings
 from murineshiftwork.logic.log import patch_logging_levels
 
 
@@ -45,8 +45,13 @@ def run_cli(*args):
         if "exit_flag" in args_dict:
             return
 
-    # Call module
-    args_dict["func"](**args_dict)
+    # Call module. A Bpod connection failure raises BpodConnectionError (instead of the library
+    # calling sys.exit); the operator already saw the boxed message, so translate it to exit 1
+    # here at the CLI boundary. A GUI/RPC caller catches the exception instead.
+    try:
+        args_dict["func"](**args_dict)
+    except BpodConnectionError:
+        sys.exit(1)
 
     logging.debug("EXITING CLI.")
 

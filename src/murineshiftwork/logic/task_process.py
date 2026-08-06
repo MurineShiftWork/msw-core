@@ -1,6 +1,5 @@
 import contextlib
 import logging
-import sys
 import time
 import uuid
 from datetime import UTC
@@ -18,7 +17,7 @@ from murineshiftwork.namespace.manifest import (
 )
 from murineshiftwork.namespace.paths import generate_session_paths
 
-from murineshiftwork.hardware.bpod import BpodFactory
+from murineshiftwork.hardware.bpod import BpodConnectionError, BpodFactory
 from murineshiftwork.hooks import (
     HookContext,
     SessionAbortError,
@@ -427,7 +426,9 @@ class TaskProcess:
                 self.serial_is_open = True
             except RuntimeError as exc:
                 print_box(f"\n{exc}\n")
-                sys.exit(1)
+                # Raise a typed error instead of sys.exit so a GUI/RPC caller is not killed;
+                # the CLI catches it at the top level and exits 1 (see cli.run_cli).
+                raise BpodConnectionError(str(exc)) from exc
 
     def persist_settings(self):
         data = {
