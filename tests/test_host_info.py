@@ -11,7 +11,7 @@ import re
 import time
 from unittest import mock
 
-from murineshiftwork.logic.task_process import (
+from murineshiftwork.logic.host_info import (
     _fqdn,
     _get_host_info,
     _ip_address,
@@ -49,7 +49,7 @@ def test_ip_address_is_ipv4_or_empty():
 def test_ip_address_empty_when_no_route():
     # no default route / offline: the connect fails and we degrade to "", never raise
     with mock.patch(
-        "murineshiftwork.logic.task_process.socket.socket", side_effect=OSError
+        "murineshiftwork.logic.host_info.socket.socket", side_effect=OSError
     ):
         assert _ip_address() == ""
 
@@ -62,14 +62,14 @@ def _slow_getfqdn():
 def test_fqdn_bounded_on_a_slow_lookup():
     # a blocking reverse-DNS lookup must not hang: the thread timeout returns "" fast
     with mock.patch(
-        "murineshiftwork.logic.task_process.socket.getfqdn", side_effect=_slow_getfqdn
+        "murineshiftwork.logic.host_info.socket.getfqdn", side_effect=_slow_getfqdn
     ):
         assert _fqdn(timeout=0.1) == ""  # gave up, did not hang
 
 
 def test_a_failing_probe_degrades_to_empty_not_raise():
     with mock.patch(
-        "murineshiftwork.logic.task_process.socket.gethostname",
+        "murineshiftwork.logic.host_info.socket.gethostname",
         side_effect=OSError("boom"),
     ):
         info = _get_host_info()
@@ -81,22 +81,20 @@ def test_a_failing_probe_degrades_to_empty_not_raise():
 def test_all_probes_failing_still_returns_the_dict():
     with (
         mock.patch(
-            "murineshiftwork.logic.task_process.socket.gethostname", side_effect=OSError
+            "murineshiftwork.logic.host_info.socket.gethostname", side_effect=OSError
         ),
         mock.patch(
-            "murineshiftwork.logic.task_process.socket.getfqdn", side_effect=OSError
+            "murineshiftwork.logic.host_info.socket.getfqdn", side_effect=OSError
         ),
         mock.patch(
-            "murineshiftwork.logic.task_process.socket.socket", side_effect=OSError
+            "murineshiftwork.logic.host_info.socket.socket", side_effect=OSError
+        ),
+        mock.patch("murineshiftwork.logic.host_info.uuid.getnode", side_effect=OSError),
+        mock.patch(
+            "murineshiftwork.logic.host_info.platform.platform", side_effect=OSError
         ),
         mock.patch(
-            "murineshiftwork.logic.task_process.uuid.getnode", side_effect=OSError
-        ),
-        mock.patch(
-            "murineshiftwork.logic.task_process.platform.platform", side_effect=OSError
-        ),
-        mock.patch(
-            "murineshiftwork.logic.task_process.getpass.getuser", side_effect=OSError
+            "murineshiftwork.logic.host_info.getpass.getuser", side_effect=OSError
         ),
     ):
         info = _get_host_info()
