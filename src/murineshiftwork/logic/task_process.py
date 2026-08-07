@@ -57,6 +57,25 @@ def _resolve_hook_setup(run_context, execution_config):
     return None
 
 
+def _resolve_run_identifiers(input_kwargs: dict) -> tuple:
+    """``(debug, session_type, acq_type, session_version)`` from the RunContext, else the kwargs.
+
+    Prefers the typed ``run_context`` (spine refactor, Cycle B); falls back to the loose keys when
+    a caller has not threaded the context through. Returns the raw values - the caller applies the
+    same ``or None`` / ``or "msw"`` / ``or 1`` defaults as before. ``task_settings`` is deliberately
+    NOT resolved here: it stays on the shared dict because pre-hooks mutate it for the task to see.
+    """
+    ctx = input_kwargs.get("run_context")
+    if ctx is not None:
+        return ctx.debug, ctx.session_type, ctx.acq_type, ctx.session_version
+    return (
+        input_kwargs.get("debug", False),
+        input_kwargs.get("session_type"),
+        input_kwargs.get("acq_type"),
+        input_kwargs.get("session_version"),
+    )
+
+
 def _strip_unserializable(obj):
     """Recursively remove callables and other non-YAML-safe objects from dicts/lists."""
     if isinstance(obj, dict):
@@ -191,20 +210,25 @@ class TaskProcess:
         self.input_kwargs["serial_port_bpod"] = self.serial_port
         if devices:
             self.input_kwargs["devices"] = devices
-        self.debug = self.input_kwargs.get("debug", False)
+        # Resolved run identifiers come from the typed RunContext (spine refactor, Cycle B),
+        # falling back to the loose kwargs. task_settings is NOT among them (see helper docstring).
+        _debug, _session_type, _acq_type, _session_version = _resolve_run_identifiers(
+            self.input_kwargs
+        )
+        self.debug = _debug
         self.simulate = simulate
         self.session_uuid = str(uuid.uuid4())
 
         self.task_name = self.task_in
-        _session_type = kwargs.get("session_type") or None
+        _session_type = _session_type or None
         # v4.3: behaviour acquisitions are the "msw" acq system, with the task as
         # a visible token in the path (acq_type=msw, task=<name>). Typed
         # acquisitions (video_flir, pxi, ...) pass their own acq_type explicitly
         # and carry no task token.
-        _acq_type = kwargs.get("acq_type") or "msw"
+        _acq_type = _acq_type or "msw"
         # task.yaml version is recorded in the session YAML (task_version), not as
         # a __vN path suffix -- v4.3 drops __vN on new writes.
-        self.task_version = kwargs.get("session_version") or 1
+        self.task_version = _session_version or 1
         self.session_paths = generate_session_paths(
             basepath=Path(self.out_path),
             subject=self.subject,
