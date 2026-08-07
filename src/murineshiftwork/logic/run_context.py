@@ -51,10 +51,17 @@ class RunContext(BaseModel):
     command: str = ""
     subject: str = ""
     task_name: str = ""
+    # the setup NAME string (args_dict["setup"]); distinct from the `setup` SetupConfig below
+    setup_name: str = ""
     config_dir: str = ""
     out_path: str = ""
     debug: bool = False
     simulate: bool = False
+    session_type: str = ""
+    # acquisition SYSTEM; "msw" for behaviour tasks (matches evaluate's default)
+    acq_type: str = "msw"
+    # task.yaml version; None -> callers default to 1
+    session_version: int | None = None
     ports: DevicePorts = Field(default_factory=DevicePorts)
     setup: SetupConfig | None = None
     subject_config: SubjectConfig | None = None
@@ -71,10 +78,14 @@ class RunContext(BaseModel):
             command=d.get("command", "") or "",
             subject=d.get("subject", "") or "",
             task_name=d.get("task_name") or d.get("task", "") or "",
+            setup_name=d.get("setup", "") or "",
             config_dir=d.get("config_dir", "") or "",
             out_path=d.get("out_path", "") or "",
             debug=bool(d.get("debug", False)),
             simulate=bool(d.get("simulate", False)),
+            session_type=d.get("session_type", "") or "",
+            acq_type=d.get("acq_type") or "msw",
+            session_version=d.get("session_version"),
             ports=DevicePorts(
                 bpod=d.get("serial_port_bpod", "") or "",
                 stage=d.get("serial_port_stage", "") or "",
@@ -96,10 +107,14 @@ class RunContext(BaseModel):
             "command": self.command,
             "subject": self.subject,
             "task_name": self.task_name,
+            "setup": self.setup_name,
             "config_dir": self.config_dir,
             "out_path": self.out_path,
             "debug": self.debug,
             "simulate": self.simulate,
+            "session_type": self.session_type,
+            "acq_type": self.acq_type,
+            "session_version": self.session_version,
             "serial_port_bpod": self.ports.bpod,
             "serial_port_stage": self.ports.stage,
             "serial_port_scale": self.ports.scale,
