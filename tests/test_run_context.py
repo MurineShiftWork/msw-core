@@ -35,6 +35,32 @@ def test_from_args_dict_extracts_scalars_and_ports():
     assert ctx.task_settings == {"start_level": 7}
 
 
+def test_from_args_dict_extracts_run_identifiers():
+    d = {
+        "setup": "rig_a",
+        "session_type": "opto",
+        "acq_type": "video_flir",
+        "session_version": 3,
+    }
+    ctx = RunContext.from_args_dict(d)
+    assert ctx.setup_name == "rig_a"
+    assert ctx.session_type == "opto"
+    assert ctx.acq_type == "video_flir"
+    assert ctx.session_version == 3
+
+
+def test_run_identifier_defaults_match_evaluate():
+    ctx = RunContext.from_args_dict({})
+    assert ctx.setup_name == ""
+    assert ctx.session_type == ""
+    assert ctx.acq_type == "msw"  # evaluate defaults acq_type to "msw"
+    assert ctx.session_version is None  # callers default to 1
+    # to_task_kwargs projects them back to their args_dict keys
+    kw = ctx.to_task_kwargs()
+    assert kw["setup"] == "" and kw["session_type"] == ""
+    assert kw["acq_type"] == "msw" and kw["session_version"] is None
+
+
 def test_device_ports_get_mirrors_serial_port_lookup():
     ports = DevicePorts(bpod="/dev/b", pulsepal="/dev/p")
     # known fields resolve; unknown device types degrade to "" (like args_dict.get default)
