@@ -9,6 +9,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from murineshiftwork.logic.task_process import (
+    _ctx_field,
     _resolve_hook_setup,
     _resolve_run_identifiers,
 )
@@ -54,3 +55,24 @@ def test_run_identifiers_fall_back_to_kwargs():
 def test_run_identifiers_fallback_defaults():
     # no context, missing keys: debug -> False, the rest -> None (caller applies or-defaults)
     assert _resolve_run_identifiers({}) == (False, None, None, None)
+
+
+# --------------------------------------------------------------------------- #
+# _ctx_field: single string field from RunContext, else the loose kwargs key
+
+
+def test_ctx_field_prefers_context():
+    ctx = SimpleNamespace(setup_name="rig_a")
+    # kwargs "setup" is ignored when the context is present
+    assert (
+        _ctx_field({"run_context": ctx, "setup": "ignored"}, "setup_name", "setup")
+        == "rig_a"
+    )
+
+
+def test_ctx_field_falls_back_to_kwargs_key():
+    assert _ctx_field({"setup": "rig_b"}, "setup_name", "setup") == "rig_b"
+
+
+def test_ctx_field_default_when_absent():
+    assert _ctx_field({}, "setup_name", "setup") == ""

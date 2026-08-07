@@ -76,6 +76,18 @@ def _resolve_run_identifiers(input_kwargs: dict) -> tuple:
     )
 
 
+def _ctx_field(input_kwargs: dict, field: str, key: str, default: str = "") -> str:
+    """A RunContext ``field`` if the context is threaded through, else ``input_kwargs[key]``.
+
+    The single-field form of the Cycle B/C reads: prefer ``run_context.<field>``, fall back to the
+    loose kwargs key. Used for the resolved string identifiers (setup name, session_type).
+    """
+    ctx = input_kwargs.get("run_context")
+    if ctx is not None:
+        return getattr(ctx, field)
+    return input_kwargs.get(key, default)
+
+
 def _strip_unserializable(obj):
     """Recursively remove callables and other non-YAML-safe objects from dicts/lists."""
     if isinstance(obj, dict):
@@ -283,7 +295,7 @@ class TaskProcess:
             "Session: task=%s subject=%s setup=%s",
             self.task_name,
             self.subject,
-            self.input_kwargs.get("setup", ""),
+            _ctx_field(self.input_kwargs, "setup_name", "setup"),
         )
         _host = _get_host_info()
         logging.info(
@@ -394,9 +406,9 @@ class TaskProcess:
 
         bearer_token = log_cfg["log_bearer_token"]
         self._relay_queue = multiprocessing.Queue(maxsize=500)
-        setup = self.input_kwargs.get("setup", "") or self.input_kwargs.get(
-            "metadata", {}
-        ).get("setup", "")
+        setup = _ctx_field(self.input_kwargs, "setup_name", "setup") or (
+            self.input_kwargs.get("metadata", {}).get("setup", "")
+        )
         session_start_payload = {
             "subject": self.subject,
             "task": self.task_name,
@@ -464,7 +476,7 @@ class TaskProcess:
                 "session_uuid": self.session_uuid,
                 "task": self.task_name,
                 "subject": self.subject,
-                "setup": self.input_kwargs.get("setup", ""),
+                "setup": _ctx_field(self.input_kwargs, "setup_name", "setup"),
                 "serial_port": self.serial_port,
                 "out_path": self.out_path,
                 "session_folder": str(self.session_paths.get("session_folder", "")),
@@ -478,7 +490,10 @@ class TaskProcess:
                 "acq_type": self.session_paths.get("acq_type", ""),
                 "acq_version": self.session_paths.get("acq_version"),
                 "task_version": self.task_version,
-                "session_type": self.input_kwargs.get("session_type") or "",
+                "session_type": _ctx_field(
+                    self.input_kwargs, "session_type", "session_type"
+                )
+                or "",
                 "host_session_name": self.session_paths.get("host_session_name", ""),
             },
         }
