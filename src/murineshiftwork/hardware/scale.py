@@ -12,6 +12,10 @@ import statistics
 import time
 from abc import ABC, abstractmethod
 
+from murineshiftwork.hardware.manager import ManagedDevice
+
+log = logging.getLogger(__name__)
+
 
 class WeighingScaleBase(ABC):
     """Minimal interface every weighing-scale driver must satisfy."""
@@ -180,3 +184,49 @@ def make_scale(
     raise ValueError(
         f"Unknown scale_type {scale_type!r}. Supported: 'hx711', 'bench', 'sim'"
     )
+
+
+# ---------------------------------------------------------------------------
+# DeviceProtocol wrapper (hardware.manager)
+
+
+class ScaleDevice(ManagedDevice):
+    """DeviceProtocol wrapper over the ``make_scale`` adapter.
+
+    ``_open`` builds the adapter via ``make_scale`` and starts it; ``_close`` stops it. Preflight is
+    overridden to skip the port check for the hardware-free ``"sim"`` type. Lifecycle otherwise
+    comes from :class:`murineshiftwork.hardware.manager.ManagedDevice`.
+    """
+
+    name = "scale"
+
+    def __init__(
+        self,
+        serial_port: str,
+        scale_type: str = "hx711",
+        baudrate: int | None = None,
+        protocol: int | None = None,
+    ) -> None:
+        super().__init__(serial_port)
+        self._scale_type = scale_type
+        self._baudrate = baudrate
+        self._protocol = protocol
+
+    def preflight(self) -> None:
+        if self._scale_type == "sim":
+            return  # a sim scale needs no serial port
+        super().preflight()
+
+    def _open(self) -> WeighingScaleBase:
+        scale = make_scale(
+            serial_port=self._serial_port,
+            scale_type=self._scale_type,
+            baudrate=self._baudrate,
+            protocol=self._protocol,
+        )
+        scale.start()
+        log.info("Scale: connected (%s) on %s", self._scale_type, self._serial_port)
+        return scale
+
+    def _close(self, handle: WeighingScaleBase) -> None:
+        handle.stop()

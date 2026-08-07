@@ -17,6 +17,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Protocol, runtime_checkable
 
+from murineshiftwork.logic.misc import serial_port_present
+
 log = logging.getLogger(__name__)
 
 
@@ -49,6 +51,58 @@ class DeviceProtocol(Protocol):
     def handle(self) -> Any:
         """Return the raw device handle to pass to the task (e.g. a Bpod instance)."""
         ...
+
+
+class ManagedDevice:
+    """Base ``DeviceProtocol`` implementation: the shared device lifecycle.
+
+    A concrete device sets ``name`` and overrides ``_open()`` (construct + return the driver
+    handle) and, if teardown is needed, ``_close(handle)``. Everything else - the serial-port
+    ``preflight``, the ``connect`` → ``_open`` wiring, the best-effort ``disconnect``, and the
+    ``handle`` guard - is provided here, so each device is only its construction logic. A device
+    with a different preflight (e.g. a sim scale needs no port) overrides ``preflight``. Satisfies
+    ``DeviceProtocol`` structurally.
+    """
+
+    name: str = ""
+
+    def __init__(self, serial_port: str) -> None:
+        self._serial_port = serial_port
+        self._handle: Any = None
+
+    def preflight(self) -> None:
+        if not serial_port_present(self._serial_port):
+            raise ValueError(
+                f"{self.name or 'device'} serial port not accessible: "
+                f"{self._serial_port!r}"
+            )
+
+    def connect(self) -> None:
+        self._handle = self._open()
+
+    def disconnect(self) -> None:
+        if self._handle is not None:
+            try:
+                self._close(self._handle)
+            except Exception:
+                log.debug("%s disconnect: teardown raised", self.name, exc_info=True)
+            self._handle = None
+
+    @property
+    def handle(self) -> Any:
+        if self._handle is None:
+            raise RuntimeError(
+                f"{type(self).__name__} not connected: call connect() before "
+                "accessing handle"
+            )
+        return self._handle
+
+    def _open(self) -> Any:
+        """Construct and return the driver handle. Subclasses must override."""
+        raise NotImplementedError
+
+    def _close(self, handle: Any) -> None:
+        """Tear down the handle. Subclasses override when teardown is needed."""
 
 
 class HardwareManager:
