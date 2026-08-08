@@ -105,6 +105,25 @@ class ManagedDevice:
         """Tear down the handle. Subclasses override when teardown is needed."""
 
 
+class DeviceCollection(dict):
+    """The confirmed set of opened devices handed to a task.
+
+    Subclasses ``dict`` and holds ``{name: handle}``, so it is a drop-in for the plain handle dict
+    tasks read today - ``devices.get("bpod")``, ``devices["bpod"]``, ``"bpod" in devices`` and
+    ``isinstance(devices, dict)`` all keep working. Adds :meth:`device` to reach the
+    ``DeviceProtocol`` descriptor (its resolved port, type, connection state) when the framework or
+    a task needs more than the raw handle.
+    """
+
+    def __init__(self, devices: list[DeviceProtocol]) -> None:
+        super().__init__((d.name, d.handle) for d in devices)
+        self._descriptors: dict[str, DeviceProtocol] = {d.name: d for d in devices}
+
+    def device(self, name: str) -> DeviceProtocol | None:
+        """The ``DeviceProtocol`` descriptor for *name* (or ``None``)."""
+        return self._descriptors.get(name)
+
+
 class HardwareManager:
     """Open a list of devices in order; close all on exit.
 
@@ -126,7 +145,7 @@ class HardwareManager:
         self._devices = devices
         self._opened: list[DeviceProtocol] = []
 
-    def open(self) -> dict[str, Any]:
+    def open(self) -> DeviceCollection:
         for device in self._devices:
             log.info("Hardware preflight: %s", device.name)
             device.preflight()
@@ -134,7 +153,7 @@ class HardwareManager:
             device.connect()
             self._opened.append(device)
             log.info("Hardware ready: %s", device.name)
-        return {d.name: d.handle for d in self._opened}
+        return DeviceCollection(self._opened)
 
     def close(self) -> None:
         for device in reversed(self._opened):
@@ -145,7 +164,7 @@ class HardwareManager:
                 log.warning("Error disconnecting %s", device.name, exc_info=True)
         self._opened.clear()
 
-    def __enter__(self) -> dict[str, Any]:
+    def __enter__(self) -> DeviceCollection:
         return self.open()
 
     def __exit__(self, *_: object) -> None:

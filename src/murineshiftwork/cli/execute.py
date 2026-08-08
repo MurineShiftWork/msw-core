@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import sys
 from collections.abc import Callable
@@ -14,23 +15,81 @@ from murineshiftwork.logic.machine_config import (
 from murineshiftwork.logic.misc import print_box
 from murineshiftwork.logic.run_context import RunContext
 
+# Device factory: (typed device config, resolved serial port) -> a DeviceProtocol wrapper. Keyed
+# by the device *type* (SetupConfig device.type). Adding a device = a wrapper + one entry here.
 
-def _make_bpod(port: str) -> Any:
+
+def _make_bpod(cfg: Any, port: str) -> Any:
     from murineshiftwork.hardware.bpod.device import BpodDevice
 
     return BpodDevice(serial_port=port)
 
 
-def _make_pulsepal(port: str) -> Any:
+def _make_pulsepal(cfg: Any, port: str) -> Any:
     from murineshiftwork.hardware.pulsepal.device import PulsePalDevice
 
     return PulsePalDevice(serial_port=port)
 
 
-_DEVICE_REGISTRY: dict[str, Callable[[str], Any]] = {
+def _make_stage(cfg: Any, port: str) -> Any:
+    from murineshiftwork.cli.evaluate import _stage_device_to_controller_config
+    from murineshiftwork.hardware.stage import StageDevice
+
+    return StageDevice(
+        serial_port=port, controller_config=_stage_device_to_controller_config(cfg)
+    )
+
+
+def _make_scale(cfg: Any, port: str) -> Any:
+    from murineshiftwork.hardware.scale import ScaleDevice
+
+    return ScaleDevice(
+        serial_port=port,
+        scale_type=getattr(cfg, "scale_type", "hx711"),
+        baudrate=getattr(cfg, "baudrate", None),
+        protocol=getattr(cfg, "scale_protocol", None),
+    )
+
+
+_DEVICE_REGISTRY: dict[str, Callable[[Any, str], Any]] = {
     "bpod": _make_bpod,
     "pulsepal": _make_pulsepal,
+    "stage_tower": _make_stage,
+    "scale": _make_scale,
 }
+
+
+def _build_device_list(ctx: RunContext) -> list:
+    """The DeviceProtocol wrappers to open for this run - the required devices from the setup.
+
+    For each device in ``setup.devices`` whose name is in the task's ``required_devices`` (default
+    ``["bpod"]``): resolve its serial port (RunContext by type, then by name, then the config's own
+    ``device_port``) and build its wrapper from the registry. Devices with no registered factory or
+    no resolvable port are skipped. Returns the (unopened) wrappers; HardwareManager opens them.
+    """
+    setup_config = ctx.setup
+    if setup_config is None:
+        return []
+    required = set(ctx.task_settings.get("required_devices") or ["bpod"])
+    device_list: list = []
+    for dev_name, dev_cfg in setup_config.devices.items():
+        if dev_name not in required:
+            continue
+        factory = _DEVICE_REGISTRY.get(dev_cfg.type)
+        if factory is None:
+            logging.warning(
+                "No device factory for type %r (device %r): skipping",
+                dev_cfg.type,
+                dev_name,
+            )
+            continue
+        port = ctx.ports.get(dev_cfg.type) or ctx.ports.get(dev_name)
+        if not port:
+            with contextlib.suppress(Exception):
+                port = setup_config.device_port(dev_name)
+        if port:
+            device_list.append(factory(dev_cfg, port))
+    return device_list
 
 
 def _apply_stage_position(args_dict: dict) -> None:
@@ -84,36 +143,18 @@ def run_task(**args_dict):
     task_name = args_dict["task"]
     mod = importlib.import_module(f"murineshiftwork.tasks.{task_name}.task")
 
-    # First consumer of the typed run context (spine refactor, Phase 2): the device-list build
-    # reads RunContext fields instead of the untyped args_dict keys. Fall back to building one if
-    # evaluate_args did not (e.g. a direct call), so behaviour is identical either way. The task
-    # boundary below still receives the full **args_dict.
+    # Resolved run context; fall back to building one if evaluate_args did not (e.g. a direct
+    # call). The task boundary below still receives the full **args_dict.
     ctx = args_dict.get("run_context") or RunContext.from_args_dict(args_dict)
 
     serial_port = ctx.ports.bpod
     if serial_port and not ctx.simulate and not args_dict.get("bpod"):
         from murineshiftwork.hardware.manager import HardwareManager
 
-        setup_config = ctx.setup
-        if setup_config is not None:
-            required = set(ctx.task_settings.get("required_devices") or ["bpod"])
-            device_list = []
-            for dev_name, dev_cfg in setup_config.devices.items():
-                if dev_name not in required:
-                    continue
-                factory = _DEVICE_REGISTRY.get(dev_cfg.type)
-                if factory is None:
-                    logging.warning(
-                        "No device factory for type %r (device %r): skipping",
-                        dev_cfg.type,
-                        dev_name,
-                    )
-                    continue
-                port = ctx.ports.get(dev_cfg.type)
-                if port:
-                    device_list.append(factory(port))
+        if ctx.setup is not None:
+            device_list = _build_device_list(ctx)
         else:
-            device_list = [_make_bpod(serial_port)]
+            device_list = [_make_bpod(None, serial_port)]
 
         with HardwareManager(device_list) as devices:
             if "bpod" in devices:
