@@ -1,6 +1,9 @@
+import atexit
 import contextlib
+import faulthandler
 import json
 import logging
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -16,6 +19,31 @@ _CENTRAL_LOG_DIR = Path("~/.murineshiftwork/logs").expanduser()
 _MAX_LOG_FILES = 100
 
 
+def _enable_fault_log(central_log_path: Path) -> tuple[Path, Callable[[], None]]:
+    """Capture native crashes (SIGSEGV/SIGABRT/SIGFPE/SIGBUS) to a ``.fault.log`` beside the run log.
+
+    A C-level crash kills the process before Python can log it, so a plain log just stops mid-write.
+    ``faulthandler`` dumps every thread's Python stack to this file on a fatal signal - the one thing
+    ordinary logging cannot record. The file is kept ONLY when a fault occurs: an atexit hook removes
+    it on any normal exit (clean finish, sys.exit, or a Python exception), but a fatal signal
+    terminates the process before atexit runs, so the dump survives. Same stem as the run log with a
+    ``.fault.log`` suffix, so a crash record sits next to its run log.
+    """
+    fault_log_path = central_log_path.with_name(central_log_path.stem + ".fault.log")
+    # kept open for faulthandler's lifetime; closed by the atexit hook below
+    fault_file = fault_log_path.open("w")  # noqa: SIM115
+    faulthandler.enable(file=fault_file, all_threads=True)
+
+    def _remove_fault_log_on_clean_exit() -> None:
+        with contextlib.suppress(Exception):
+            faulthandler.disable()
+            fault_file.close()
+            fault_log_path.unlink(missing_ok=True)
+
+    atexit.register(_remove_fault_log_on_clean_exit)
+    return fault_log_path, _remove_fault_log_on_clean_exit
+
+
 def setup_logging(level=None, log_file=None, task="", subject="", setup=""):
     if level is None:
         level = "DEBUG"
@@ -27,7 +55,11 @@ def setup_logging(level=None, log_file=None, task="", subject="", setup=""):
     for h in list(logger.handlers):
         logger.removeHandler(h)
 
-    logger.setLevel(getattr(logging, level))
+    # Root at DEBUG so the DEBUG file handler receives everything; the console handler carries
+    # the requested level. This decouples the two: the file is full DEBUG while the console
+    # honours --log-level (records are filtered at the logger first, so without this the file
+    # handler is starved to the console level).
+    logger.setLevel(logging.DEBUG)
 
     formatter = logging.Formatter("%(message)s")
     formatter.datefmt = "%Y-%m-%d %H:%M:%S.%f"
@@ -42,7 +74,13 @@ def setup_logging(level=None, log_file=None, task="", subject="", setup=""):
         _parts = [p for p in [setup, dt, subject, task] if p]
         stem = "--".join(_parts)
         central_log_path = _CENTRAL_LOG_DIR / f"{stem}.log"
-        all_logs = sorted(_CENTRAL_LOG_DIR.glob("*.log"))
+        # Prune run logs, but NOT .fault.log files - those are rare (only left by a crash)
+        # and worth keeping until reviewed/cleaned by hand.
+        all_logs = sorted(
+            p
+            for p in _CENTRAL_LOG_DIR.glob("*.log")
+            if not p.name.endswith(".fault.log")
+        )
         for old in all_logs[:-_MAX_LOG_FILES]:
             with contextlib.suppress(OSError):
                 old.unlink()
@@ -54,6 +92,8 @@ def setup_logging(level=None, log_file=None, task="", subject="", setup=""):
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
     _MSW_ROOT_HANDLER_IDS.add(id(file_handler))
+
+    _enable_fault_log(central_log_path)
 
     logging_handler = RichHandler(
         console=get_console(),
