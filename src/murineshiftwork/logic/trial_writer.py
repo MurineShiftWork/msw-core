@@ -34,6 +34,14 @@ class TrialDataWriter(ABC):
         """Persist one scored trial dict. Must be durable on return."""
 
     @abstractmethod
+    def write_all(self, trials: list[dict]) -> None:
+        """Persist the given full trial list, replacing any prior contents.
+
+        The whole-list counterpart to ``write_trial`` for a task that keeps its own accumulated
+        list and rewrites it each trial. Durable on return.
+        """
+
+    @abstractmethod
     def close(self) -> None:
         """Flush and finalise. Idempotent."""
 
@@ -69,6 +77,12 @@ class JsonlTrialDataWriter(TrialDataWriter):
         from murineshiftwork.io import save_trial_data
 
         self._trials.append(trial)
+        save_trial_data(self._trials, self._filepath)  # whole-file rewrite
+
+    def write_all(self, trials: list[dict]) -> None:
+        from murineshiftwork.io import save_trial_data
+
+        self._trials = list(trials)
         save_trial_data(self._trials, self._filepath)  # whole-file rewrite
 
     def close(self) -> None:

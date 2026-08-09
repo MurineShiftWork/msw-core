@@ -43,6 +43,34 @@ def test_writer_rewrites_whole_file_each_trial(tmp_path):
         assert writer.trial_count == n
 
 
+def test_write_all_matches_save_trial_data(tmp_path):
+    """The whole-list write is byte-identical to a direct save of the same list."""
+    via_writer = tmp_path / "writer.df.jsonl"
+    writer = JsonlTrialDataWriter(via_writer)
+    writer.open()
+    writer.write_all(_TRIALS)
+
+    via_batch = tmp_path / "batch.df.jsonl"
+    save_trial_data(_TRIALS, via_batch)
+
+    assert via_writer.read_bytes() == via_batch.read_bytes()
+    assert writer.trial_count == len(_TRIALS)
+
+
+def test_write_all_replaces_prior_contents(tmp_path):
+    """A later, shorter write_all fully replaces an earlier one (no stale trailing trials)."""
+    path = tmp_path / "df.jsonl"
+    writer = JsonlTrialDataWriter(path)
+    writer.open()
+    writer.write_all(_TRIALS)
+    writer.write_all(_TRIALS[:1])
+
+    expected = tmp_path / "expected.jsonl"
+    save_trial_data(_TRIALS[:1], expected)
+    assert path.read_bytes() == expected.read_bytes()
+    assert writer.trial_count == 1
+
+
 def test_trial_count_starts_at_zero(tmp_path):
     """An unused writer reports zero trials - the signal the framework uses to skip finalising."""
     writer = JsonlTrialDataWriter(tmp_path / "df.jsonl")
