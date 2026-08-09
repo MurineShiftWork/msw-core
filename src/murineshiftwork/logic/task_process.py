@@ -40,6 +40,7 @@ from murineshiftwork.logic.misc import (
 )
 from murineshiftwork.logic.paths import test_path_is_writable
 from murineshiftwork.logic.reward_metadata import build_reward_metadata
+from murineshiftwork.logic.trial_writer import JsonlTrialDataWriter
 
 
 def _resolve_hook_setup(run_context, execution_config):
@@ -157,6 +158,18 @@ class TaskRunner(Thread):
     def stop(self):
         self.continue_task = False
 
+    def emit_trial(self, trial: dict) -> None:
+        """Persist one scored trial through the framework's trial-data writer.
+
+        A migrated task calls this once per scored trial instead of writing the file itself: the
+        durable write goes through the injected ``TrialDataWriter`` (``input_kwargs['trial_writer']``)
+        so the framework owns the destination path and on-disk format. A task that has not migrated
+        never calls this, and the writer stays empty.
+        """
+        writer = self.input_kwargs.get("trial_writer")
+        if writer is not None:
+            writer.write_trial(trial)
+
     def get_path(self, artifact: str) -> Path:
         """Return the session file path for *artifact* (e.g. 'df.jsonl', 'log')."""
         return msw_file(
@@ -192,6 +205,8 @@ class TaskProcess:
     # LogAgent relay
     _relay_queue: Any = None
     _relay_proc: Any = None
+    # Framework-owned trial-data writer (inert unless a task emits)
+    _trial_writer: Any = None
     session_uuid: str = ""
     # Misc
     exiting = False
@@ -308,6 +323,16 @@ class TaskProcess:
             _get_git_commit(),
         )
         logging.info("Session folder: %s", self.session_paths.get("session_folder", ""))
+        # Framework-owned trial-data writer: a migrated task calls emit_trial() and the write lands
+        # here instead of the task calling save_trial_data. Injected for every run but inert unless
+        # the task emits -- exit_safely only finalises it when it has trials, so a task that still
+        # writes its own file is untouched. Created after the session folder exists (its open()
+        # would otherwise pre-create the folder and collide with the exclusive mkdir above).
+        self._trial_writer = JsonlTrialDataWriter(
+            msw_file(self.session_paths["session_file_path"], "df.jsonl")
+        )
+        self._trial_writer.open()
+        self.input_kwargs["trial_writer"] = self._trial_writer
         self.persist_settings()
         self._start_relay()
 
@@ -431,6 +456,13 @@ class TaskProcess:
 
     def exit_safely(self):
         self.exiting = True
+        # Finalise the trial-data write only if the task actually emitted (trial_count > 0). A task
+        # that still writes its own file never touched the writer, so we leave its output alone.
+        if self._trial_writer is not None:
+            if self._trial_writer.trial_count > 0:
+                with contextlib.suppress(Exception):
+                    self._trial_writer.close()
+            self._trial_writer = None
         if self.serial_is_open and self.bpod is not None:
             self.bpod.close_safely()
             self.serial_is_open = False
