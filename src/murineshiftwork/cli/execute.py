@@ -59,6 +59,26 @@ _DEVICE_REGISTRY: dict[str, Callable[[Any, str], Any]] = {
 }
 
 
+def _make_sim_bpod(cfg: Any) -> Any:
+    from murineshiftwork.hardware.bpod.device import BpodDevice
+
+    return BpodDevice(serial_port="", simulate=True)
+
+
+def _make_sim_scale(cfg: Any) -> Any:
+    from murineshiftwork.hardware.scale import ScaleDevice
+
+    return ScaleDevice(serial_port="", scale_type="sim")
+
+
+# Simulation factories for device types that have a hardware-free stand-in. Types without one
+# (pulsepal, stage) are omitted from the sim collection - the task handles those in simulation.
+_SIM_DEVICE_REGISTRY: dict[str, Callable[[Any], Any]] = {
+    "bpod": _make_sim_bpod,
+    "scale": _make_sim_scale,
+}
+
+
 def _build_device_list(ctx: RunContext) -> list:
     """The DeviceProtocol wrappers to open for this run - the required devices from the setup.
 
@@ -90,6 +110,28 @@ def _build_device_list(ctx: RunContext) -> list:
         if port:
             device_list.append(factory(dev_cfg, port))
     return device_list
+
+
+def _build_sim_device_list(ctx: RunContext) -> list:
+    """Simulation wrappers for the required devices that have a stand-in (bpod, scale).
+
+    Mirrors :func:`_build_device_list` for ``--simulate``: the task receives the same device
+    collection it would on hardware, but the devices are hardware-free (SimBpod, sim scale).
+    Required devices without a sim factory (pulsepal, stage) are omitted - the task handles those
+    in simulation. Falls back to a lone sim bpod when there is no setup.
+    """
+    setup_config = ctx.setup
+    required = set(ctx.task_settings.get("required_devices") or ["bpod"])
+    if setup_config is None:
+        return [_make_sim_bpod(None)]
+    sims: list = []
+    for dev_name, dev_cfg in setup_config.devices.items():
+        if dev_name not in required:
+            continue
+        factory = _SIM_DEVICE_REGISTRY.get(dev_cfg.type)
+        if factory is not None:
+            sims.append(factory(dev_cfg))
+    return sims
 
 
 def _apply_stage_position(args_dict: dict) -> None:
@@ -147,14 +189,24 @@ def run_task(**args_dict):
     # call). The task boundary below still receives the full **args_dict.
     ctx = args_dict.get("run_context") or RunContext.from_args_dict(args_dict)
 
-    serial_port = ctx.ports.bpod
-    if serial_port and not ctx.simulate and not args_dict.get("bpod"):
-        from murineshiftwork.hardware.manager import HardwareManager
+    # Which devices to open for this run. A caller that injected a bpod owns hardware itself;
+    # otherwise build the collection - simulation stand-ins under --simulate, real devices when a
+    # bpod port is set. The task receives the same `devices` collection either way.
+    if args_dict.get("bpod"):
+        device_list = []
+    elif ctx.simulate:
+        device_list = _build_sim_device_list(ctx)
+    elif ctx.ports.bpod:
+        device_list = (
+            _build_device_list(ctx)
+            if ctx.setup is not None
+            else [_make_bpod(None, ctx.ports.bpod)]
+        )
+    else:
+        device_list = []
 
-        if ctx.setup is not None:
-            device_list = _build_device_list(ctx)
-        else:
-            device_list = [_make_bpod(None, serial_port)]
+    if device_list:
+        from murineshiftwork.hardware.manager import HardwareManager
 
         with HardwareManager(device_list) as devices:
             if "bpod" in devices:
