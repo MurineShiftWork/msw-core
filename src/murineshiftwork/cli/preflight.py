@@ -1,9 +1,11 @@
 """Pre-flight hardware checks run before any session files are created."""
 
+import contextlib
 from pathlib import Path
 
 from murineshiftwork.logic.misc import test_serial_port_is_accessible
 from murineshiftwork.logic.paths import test_path_is_writable
+from murineshiftwork.logic.run_context import RunContext
 
 
 def preflight_hardware_check(args_dict: dict) -> None:
@@ -34,33 +36,24 @@ def preflight_hardware_check(args_dict: dict) -> None:
         if not test_path_is_writable(write_test):
             errors.append(f"Output directory not writable: {out_path}")
 
-    # --- Bpod ---
-    bpod_port = args_dict.get("serial_port_bpod", "")
-    if bpod_port and not test_serial_port_is_accessible(bpod_port):
-        errors.append(f"Bpod serial port not accessible: {bpod_port!r}")
-
-    # --- PulsePal (only if task requests stimulation or setup declares it) ---
-    uses_stim = task_settings.get("use_stimulation", False)
-    has_pulsepal_in_setup = setup_config and "pulsepal" in getattr(
-        setup_config, "devices", {}
-    )
-    if uses_stim or has_pulsepal_in_setup:
-        pp_port = task_settings.get("serial_port_pulsepal") or args_dict.get(
-            "serial_port_pulsepal", ""
-        )
-        if pp_port and not test_serial_port_is_accessible(pp_port):
-            errors.append(f"PulsePal serial port not accessible: {pp_port!r}")
-
-    # --- Stage (if declared in setup) ---
-    if setup_config and "stage" in getattr(setup_config, "devices", {}):
-        try:
-            stage_port = setup_config.device_port("stage")
-        except ValueError:
-            stage_port = task_settings.get("serial_port_stage") or args_dict.get(
-                "serial_port_stage", ""
-            )
-        if stage_port and not test_serial_port_is_accessible(stage_port):
-            errors.append(f"Stage serial port not accessible: {stage_port!r}")
+    # --- Serial devices ---
+    # Data-driven over every device declared in the setup, so a new device type is checked
+    # automatically (no per-type block here). Each declared device's resolved port must be
+    # openable. Port resolution matches the session's device build: run context by type, then by
+    # name, then the config's own device_port. Without a setup, still check the CLI bpod port.
+    if setup_config is not None:
+        ctx = args_dict.get("run_context") or RunContext.from_args_dict(args_dict)
+        for dev_name, dev_cfg in getattr(setup_config, "devices", {}).items():
+            port = ctx.ports.get(dev_cfg.type) or ctx.ports.get(dev_name)
+            if not port:
+                with contextlib.suppress(Exception):
+                    port = setup_config.device_port(dev_name)
+            if port and not test_serial_port_is_accessible(port):
+                errors.append(f"{dev_name} serial port not accessible: {port!r}")
+    else:
+        bpod_port = args_dict.get("serial_port_bpod", "")
+        if bpod_port and not test_serial_port_is_accessible(bpod_port):
+            errors.append(f"bpod serial port not accessible: {bpod_port!r}")
 
     # --- Camera config file (if task records video) ---
     if task_settings.get("record_video", False):
