@@ -113,6 +113,35 @@ def test_build_returns_empty_without_setup():
 
 
 # --------------------------------------------------------------------------- #
+# simulation collection
+
+
+def test_build_sim_list_selects_devices_with_a_sim_factory():
+    setup = _Setup(
+        {
+            "bpod": _Cfg("bpod"),
+            "scale": _Cfg("scale"),
+            "stage": _Cfg("stage_tower"),  # no sim factory -> omitted
+        }
+    )
+    ctx = _ctx(setup, ["bpod", "scale", "stage"], DevicePorts())
+    sims = execute._build_sim_device_list(ctx)
+    assert sorted(d.name for d in sims) == ["bpod", "scale"]
+
+
+def test_build_sim_list_defaults_to_bpod_without_setup():
+    ctx = _ctx(None, [], DevicePorts())
+    sims = execute._build_sim_device_list(ctx)
+    assert [d.name for d in sims] == ["bpod"]
+
+
+def test_sim_bpod_factory_needs_no_port():
+    dev = execute._make_sim_bpod(None)
+    assert dev.name == "bpod" and dev._simulate is True
+    dev.preflight()  # must not raise despite having no serial port
+
+
+# --------------------------------------------------------------------------- #
 # real factories produce the right wrapper with the resolved port
 
 

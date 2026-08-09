@@ -10,24 +10,39 @@ log = logging.getLogger(__name__)
 
 
 class BpodDevice(ManagedDevice):
-    """DeviceProtocol wrapper over ``BpodFactory``.
+    """DeviceProtocol wrapper over ``BpodFactory`` (or ``SimBpod`` when ``simulate=True``).
 
     ``_open`` creates the factory and calls ``open()`` (with the factory's connect retry);
     ``_close`` calls ``close_safely()`` (idempotent). ``**factory_kwargs`` forwards
-    ``connect_retries`` / ``retry_delay_s`` to ``BpodFactory``. Lifecycle + serial preflight come
-    from :class:`ManagedDevice`.
+    ``connect_retries`` / ``retry_delay_s`` to ``BpodFactory``. With ``simulate=True`` it opens a
+    ``SimBpod`` instead and skips the serial-port preflight. Lifecycle comes from
+    :class:`ManagedDevice`.
     """
 
     name = "bpod"
 
-    def __init__(self, serial_port: str, **factory_kwargs: Any) -> None:
+    def __init__(
+        self, serial_port: str, *, simulate: bool = False, **factory_kwargs: Any
+    ) -> None:
         super().__init__(serial_port)
+        self._simulate = simulate
         self._factory_kwargs = factory_kwargs
 
-    def _open(self) -> BpodFactory:
+    def preflight(self) -> None:
+        if self._simulate:
+            return  # no serial port in simulation
+        super().preflight()
+
+    def _open(self) -> Any:
+        if self._simulate:
+            from murineshiftwork.hardware.bpod.sim import SimBpod
+
+            sim = SimBpod()
+            sim.open()
+            return sim
         factory = BpodFactory(serial_port=self._serial_port, **self._factory_kwargs)
         factory.open()
         return factory
 
-    def _close(self, handle: BpodFactory) -> None:
+    def _close(self, handle: Any) -> None:
         handle.close_safely()
