@@ -27,6 +27,17 @@ class BpodDevice(ManagedDevice):
         super().__init__(serial_port)
         self._simulate = simulate
         self._factory_kwargs = factory_kwargs
+        self._workspace_path: str | None = None
+        self._session_name: str | None = None
+
+    def set_workspace(self, workspace_path: str, session_name: str) -> None:
+        """Set the pybpod workspace (where the SDK writes its own session files).
+
+        Only known once the session folder exists, so it is set after construction and before
+        ``connect()`` (the manager opens the device inside TaskProcess, after the folder is made).
+        """
+        self._workspace_path = workspace_path
+        self._session_name = session_name
 
     def preflight(self) -> None:
         if self._simulate:
@@ -40,7 +51,12 @@ class BpodDevice(ManagedDevice):
             sim = SimBpod()
             sim.open()
             return sim
-        factory = BpodFactory(serial_port=self._serial_port, **self._factory_kwargs)
+        factory = BpodFactory(
+            serial_port=self._serial_port,
+            workspace_path=self._workspace_path,
+            session_name=self._session_name,
+            **self._factory_kwargs,
+        )
         factory.open()
         return factory
 

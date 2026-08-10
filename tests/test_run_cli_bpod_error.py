@@ -1,8 +1,8 @@
 """BpodConnectionError: the library raises it instead of sys.exit; the CLI translates to exit 1.
 
-connect_bpod used to call sys.exit(1) on a failed connection, which kills any GUI/RPC caller.
-It now raises the typed BpodConnectionError; run_cli catches it at the CLI boundary and exits 1
-(the boxed message was already printed), while a non-CLI caller can handle the exception.
+Bpod connection used to call sys.exit(1) on failure, which kills any GUI/RPC caller. Opening the
+device collection now raises the typed BpodConnectionError; run_cli catches it at the CLI boundary
+and exits 1 (the boxed message was already printed), while a non-CLI caller can handle the exception.
 """
 
 from __future__ import annotations

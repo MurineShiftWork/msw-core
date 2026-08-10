@@ -210,3 +210,51 @@ def test_scale_preflight_raises_on_missing_port(monkeypatch):
     )
     with pytest.raises(ValueError, match="serial port not accessible"):
         ScaleDevice("/nope", scale_type="hx711").preflight()
+
+
+# --------------------------------------------------------------------------- #
+# BpodDevice forwards the pybpod workspace (set after construction, once the session folder exists)
+
+
+def test_bpod_device_forwards_workspace_to_factory(monkeypatch):
+    from murineshiftwork.hardware.bpod.device import BpodDevice
+
+    captured: dict = {}
+
+    class _FakeFactory:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def open(self):
+            pass
+
+    monkeypatch.setattr(
+        "murineshiftwork.hardware.bpod.device.BpodFactory", _FakeFactory
+    )
+    dev = BpodDevice("/dev/ttyACM0")
+    dev.set_workspace("/sessions/s1", "s1.msw")
+    dev.connect()
+
+    assert captured["serial_port"] == "/dev/ttyACM0"
+    assert captured["workspace_path"] == "/sessions/s1"
+    assert captured["session_name"] == "s1.msw"
+
+
+def test_bpod_device_defaults_workspace_to_none_when_unset(monkeypatch):
+    from murineshiftwork.hardware.bpod.device import BpodDevice
+
+    captured: dict = {}
+
+    class _FakeFactory:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def open(self):
+            pass
+
+    monkeypatch.setattr(
+        "murineshiftwork.hardware.bpod.device.BpodFactory", _FakeFactory
+    )
+    BpodDevice("/dev/ttyACM0").connect()  # no set_workspace call
+    assert captured["workspace_path"] is None
+    assert captured["session_name"] is None
