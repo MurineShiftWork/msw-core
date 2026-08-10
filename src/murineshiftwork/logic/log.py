@@ -3,6 +3,7 @@ import contextlib
 import faulthandler
 import json
 import logging
+import os
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +20,13 @@ _CENTRAL_LOG_DIR = Path("~/.murineshiftwork/logs").expanduser()
 _MAX_LOG_FILES = 100
 
 
+def _disable_faulthandler_in_child() -> None:
+    """Runs in a freshly forked child: stop inheriting the parent's faulthandler so the child's own
+    crashes do not pollute the session fault log."""
+    with contextlib.suppress(Exception):
+        faulthandler.disable()
+
+
 def _enable_fault_log(central_log_path: Path) -> tuple[Path, Callable[[], None]]:
     """Capture native crashes (SIGSEGV/SIGABRT/SIGFPE/SIGBUS) to a ``.fault.log`` beside the run log.
 
@@ -33,6 +41,14 @@ def _enable_fault_log(central_log_path: Path) -> tuple[Path, Callable[[], None]]
     # kept open for faulthandler's lifetime; closed by the atexit hook below
     fault_file = fault_log_path.open("w")  # noqa: SIM115
     faulthandler.enable(file=fault_file, all_threads=True)
+
+    # A forked child (online-plot / relay subprocess) inherits this faulthandler and its open file,
+    # so the child's OWN fatal signal - e.g. a Qt plot subprocess aborting on a headless host - would
+    # be written into the session fault log and read as a session crash. Disable faulthandler in any
+    # child so the fault log reflects only THIS (main) process. Unix-only: Windows has no fork (it
+    # uses spawn, where children do not inherit this), so the problem does not arise there.
+    if hasattr(os, "register_at_fork"):
+        os.register_at_fork(after_in_child=_disable_faulthandler_in_child)
 
     def _remove_fault_log_on_clean_exit() -> None:
         with contextlib.suppress(Exception):
