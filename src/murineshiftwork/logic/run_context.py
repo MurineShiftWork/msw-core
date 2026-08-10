@@ -106,7 +106,9 @@ class RunContext(BaseModel):
         return {
             "command": self.command,
             "subject": self.subject,
-            "task_name": self.task_name,
+            # the boundary/constructor key is "task" (tasks + TaskProcess read args_dict["task"]);
+            # "task_name" is derived downstream by TaskProcess, not part of the input contract.
+            "task": self.task_name,
             "setup": self.setup_name,
             "config_dir": self.config_dir,
             "out_path": self.out_path,

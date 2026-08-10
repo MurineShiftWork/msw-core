@@ -131,4 +131,32 @@ def test_to_task_kwargs_round_trips_owned_fields():
         "serial_port_pulsepal",
     ):
         assert kw[key] == d[key]
-    assert kw["task_name"] == "t"  # normalized from "task"
+    # the boundary key is "task" (the TaskProcess constructor param / what tasks read), not
+    # "task_name"; to_task_kwargs is the frozen projection, so it must match the contract key.
+    assert kw["task"] == "t"
+    assert "task_name" not in kw
+
+
+def test_to_task_kwargs_keys_are_all_boundary_input_keys():
+    """Every key to_task_kwargs projects must be a key the resolved args_dict already carries -
+    i.e. a faithful subset of the task boundary, never inventing a key tasks don't read."""
+    d = {
+        "command": "run",
+        "subject": "s",
+        "task": "t",
+        "setup": "setup-x",
+        "config_dir": "/c",
+        "out_path": "/o",
+        "session_type": "",
+        "acq_type": "msw",
+        "session_version": 1,
+        "serial_port_bpod": "/dev/b",
+        "serial_port_stage": "/dev/s",
+        "serial_port_scale": "/dev/sc",
+        "serial_port_pulsepal": "/dev/p",
+    }
+    kw = RunContext.from_args_dict(d).to_task_kwargs()
+    assert set(kw) <= set(d) | {
+        "debug",
+        "simulate",
+    }  # debug/simulate default when absent
