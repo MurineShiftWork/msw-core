@@ -11,10 +11,24 @@ name/ip) are mocked so the pipeline is pure and deterministic.
 
 from __future__ import annotations
 
+from importlib.metadata import entry_points
 from unittest.mock import patch
+
+import pytest
 
 from murineshiftwork.cli import evaluate as ev
 from murineshiftwork.logic.run_context import RunContext
+
+# evaluate_args resolves the task through the `msw.tasks` entry points. msw-core's CI installs no
+# task packages (it is tested in isolation), so this full-pipeline characterization only runs where
+# the workspace stack is present - i.e. locally, which is where the evaluate->RunContext (Phase 2b)
+# work happens. The boundary + RunContext nets (test_run_task_boundary, test_run_context) cover the
+# contract in msw-core CI regardless.
+if not list(entry_points(group="msw.tasks")):
+    pytest.skip(
+        "needs the msw.tasks stack (full workspace); msw-core CI runs in isolation",
+        allow_module_level=True,
+    )
 
 # The resolved keys evaluate_args produces for a no-setup simulate/debug run. `original` (a copy of
 # the input) is excluded. A no-setup run resolves no serial ports, so `serial_port_*` are absent -
