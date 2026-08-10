@@ -57,3 +57,24 @@ def test_forked_child_does_not_inherit_faulthandler(tmp_path):
         cleanup()
         if was_enabled and not faulthandler.is_enabled():
             faulthandler.enable()
+
+
+def test_prune_removes_empty_fault_logs_but_keeps_real_crash_dumps(
+    tmp_path, monkeypatch
+):
+    """Empty .fault.log (SIGTERM, no crash) is pruned; a non-empty one (real crash) is kept."""
+    from murineshiftwork.logic import log as logmod
+
+    monkeypatch.setattr(logmod, "_CENTRAL_LOG_DIR", tmp_path)
+    empty = tmp_path / "a--dt--s--t.fault.log"
+    empty.write_text("")  # 0 bytes -> killed, not crashed
+    crash = tmp_path / "b--dt--s--t.fault.log"
+    crash.write_text("Fatal Python error: Segmentation fault\n...")  # real dump
+    run_log = tmp_path / "c--dt--s--t.log"
+    run_log.write_text("some run output")
+
+    logmod._prune_central_logs()
+
+    assert not empty.exists()  # empty fault log pruned
+    assert crash.exists()  # real crash dump kept
+    assert run_log.exists()  # under the cap, kept

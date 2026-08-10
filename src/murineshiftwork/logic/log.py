@@ -20,6 +20,25 @@ _CENTRAL_LOG_DIR = Path("~/.murineshiftwork/logs").expanduser()
 _MAX_LOG_FILES = 100
 
 
+def _prune_central_logs() -> None:
+    """Cap the central log dir: keep the newest run logs, and drop empty (non-crash) fault logs.
+
+    Run logs are pruned to the newest ``_MAX_LOG_FILES``. ``.fault.log`` files are kept only when
+    NON-empty (a real crash dump worth reviewing); an EMPTY one means the process was killed without
+    a clean exit (e.g. SIGTERM) but did not crash, so atexit never removed its empty startup file.
+    """
+    run_logs = sorted(
+        p for p in _CENTRAL_LOG_DIR.glob("*.log") if not p.name.endswith(".fault.log")
+    )
+    for old in run_logs[:-_MAX_LOG_FILES]:
+        with contextlib.suppress(OSError):
+            old.unlink()
+    for fault in _CENTRAL_LOG_DIR.glob("*.fault.log"):
+        with contextlib.suppress(OSError):
+            if fault.stat().st_size == 0:
+                fault.unlink()
+
+
 def _disable_faulthandler_in_child() -> None:
     """Runs in a freshly forked child: stop inheriting the parent's faulthandler so the child's own
     crashes do not pollute the session fault log."""
@@ -90,16 +109,7 @@ def setup_logging(level=None, log_file=None, task="", subject="", setup=""):
         _parts = [p for p in [setup, dt, subject, task] if p]
         stem = "--".join(_parts)
         central_log_path = _CENTRAL_LOG_DIR / f"{stem}.log"
-        # Prune run logs, but NOT .fault.log files - those are rare (only left by a crash)
-        # and worth keeping until reviewed/cleaned by hand.
-        all_logs = sorted(
-            p
-            for p in _CENTRAL_LOG_DIR.glob("*.log")
-            if not p.name.endswith(".fault.log")
-        )
-        for old in all_logs[:-_MAX_LOG_FILES]:
-            with contextlib.suppress(OSError):
-                old.unlink()
+        _prune_central_logs()
 
     # encoding="utf-8": on Windows a FileHandler defaults to the locale codec (cp1252)
     # and raises UnicodeEncodeError on non-latin-1 log text (e.g. a "->" arrow, "µ").
