@@ -17,7 +17,7 @@ from murineshiftwork.namespace.manifest import (
 )
 from murineshiftwork.namespace.paths import generate_session_paths
 
-from murineshiftwork.hardware.bpod import BpodConnectionError, BpodFactory
+from murineshiftwork.hardware.bpod import BpodConnectionError
 from murineshiftwork.hooks import (
     HookContext,
     SessionAbortError,
@@ -36,7 +36,6 @@ from murineshiftwork.logic.log import (
 )
 from murineshiftwork.logic.misc import (
     print_box,
-    test_serial_port_is_accessible,
 )
 from murineshiftwork.logic.paths import test_path_is_writable
 from murineshiftwork.logic.reward_metadata import build_reward_metadata
@@ -193,7 +192,7 @@ class TaskProcess:
     subject = None
     input_kwargs: dict = {}
     # Run task
-    session_paths = None
+    session_paths: Any = None
     bpod: Any = None
     bpod_baudrate = 115200
     serial_is_open = False
@@ -207,6 +206,8 @@ class TaskProcess:
     _relay_proc: Any = None
     # Framework-owned trial-data writer (inert unless a task emits)
     _trial_writer: Any = None
+    # HardwareManager owning this run's device collection (None when a bpod/collection is injected)
+    _hw_manager: Any = None
     session_uuid: str = ""
     # Misc
     exiting = False
@@ -336,31 +337,30 @@ class TaskProcess:
         self.persist_settings()
         self._start_relay()
 
+        # Acquire the run's devices. A caller may inject a `bpod` handle or a pre-opened `devices`
+        # collection and keep ownership; otherwise open the declared collection HERE - now that the
+        # session folder exists, which bpod needs for its pybpod workspace. This is the single bpod
+        # path (real, simulated, and the bare-serial-port fallback all go through the device wrapper
+        # + HardwareManager); it replaces the old connect_bpod method.
+        if bpod is None and devices is None:
+            devices = self._open_devices(require_bpod)
         if bpod is None and devices is not None:
             bpod = devices.get("bpod")
+        if devices is not None:
+            self.input_kwargs["devices"] = devices
 
         if bpod is not None:
-            logging.info("Bpod: using injected handle")
+            logging.info(
+                "Bpod: using %s handle",
+                "device-collection" if self._hw_manager is not None else "injected",
+            )
             self.bpod = bpod
             self.serial_is_open = True
-        elif self.simulate:
-            from murineshiftwork.hardware.bpod.sim import SimBpod
-
-            logging.info("Bpod: simulation mode (SimBpod)")
-            self.bpod = SimBpod()
-            self.bpod.open()
-            self.serial_is_open = True
         elif require_bpod:
-            if self.serial_port:
-                logging.info("Bpod: preflight check on %s", self.serial_port)
-                accessible = test_serial_port_is_accessible(
-                    port=self.serial_port,
-                    baudrate=self.bpod_baudrate,
-                    timeout=1,
-                )
-                if not accessible and not self.debug:
-                    raise OSError(f"Serial port not accessible at {self.serial_port}")
-            self.connect_bpod()
+            raise BpodConnectionError(
+                "Bpod required but none available: no injected handle, no device list, "
+                f"and no serial port (serial_port_bpod={self.serial_port!r})."
+            )
 
         # Build hook context and load hooks (after bpod is connected)
         _task_settings = self.input_kwargs.get("settings.task.patched", {})
@@ -463,7 +463,13 @@ class TaskProcess:
                 with contextlib.suppress(Exception):
                     self._trial_writer.close()
             self._trial_writer = None
-        if self.serial_is_open and self.bpod is not None:
+        if self._hw_manager is not None:
+            # We opened the device collection: tear down every device (bpod included) in one place.
+            self._hw_manager.close()
+            self._hw_manager = None
+            self.serial_is_open = False
+        elif self.serial_is_open and self.bpod is not None:
+            # Injected/legacy bpod handle we do not own a manager for.
             self.bpod.close_safely()
             self.serial_is_open = False
         if self._relay_queue is not None:
@@ -471,32 +477,43 @@ class TaskProcess:
                 self._relay_queue.put_nowait(None)
             self._relay_queue = None
 
-    def connect_bpod(self, max_try=None, retry_delay_s=None):
-        """Connect device on serial port.
+    def _open_devices(self, require_bpod: bool):
+        """Open this run's declared devices, now that the session folder exists.
 
-        max_try and retry_delay_s are forwarded to BpodFactory; when None,
-        BpodFactory uses its own defaults (connect_retries=3, retry_delay_s=2.0).
+        Device descriptors come from ``input_kwargs['device_list']`` (built by the CLI from the
+        setup + ports, or the sim stand-ins under ``--simulate``). As a fallback for a
+        ``require_bpod`` run with no declared list, a lone bpod device is built from the serial port
+        (or a ``SimBpod`` under simulate) - this is what replaced the old ``connect_bpod`` path.
+        Bpod receives the session folder as its pybpod workspace. Returns the opened
+        ``DeviceCollection``, or ``None`` when there is nothing to open.
         """
-        if not self.serial_is_open and not self.exiting:
-            logging.debug(f"Connecting bpod on serial port: {self.serial_port}")
-            kwargs: dict = dict(
-                serial_port=self.serial_port,
-                workspace_path=self.session_paths["session_folder"],
-                session_name=self.session_paths["session_basename"] + ".msw",
-            )
-            if max_try is not None:
-                kwargs["connect_retries"] = max_try
-            if retry_delay_s is not None:
-                kwargs["retry_delay_s"] = retry_delay_s
-            try:
-                self.bpod = BpodFactory(**kwargs)
-                self.bpod.open()
-                self.serial_is_open = True
-            except RuntimeError as exc:
-                print_box(f"\n{exc}\n")
-                # Raise a typed error instead of sys.exit so a GUI/RPC caller is not killed;
-                # the CLI catches it at the top level and exits 1 (see cli.run_cli).
-                raise BpodConnectionError(str(exc)) from exc
+        from murineshiftwork.hardware.bpod.device import BpodDevice
+        from murineshiftwork.hardware.manager import HardwareManager
+
+        device_list = list(self.input_kwargs.get("device_list") or [])
+        if not device_list and (require_bpod or self.simulate):
+            if self.simulate:
+                device_list = [BpodDevice("", simulate=True)]
+            elif self.serial_port:
+                device_list = [BpodDevice(self.serial_port)]
+        if not device_list:
+            return None
+
+        for dev in device_list:
+            if getattr(dev, "name", "") == "bpod" and hasattr(dev, "set_workspace"):
+                dev.set_workspace(
+                    self.session_paths["session_folder"],
+                    self.session_paths["session_basename"] + ".msw",
+                )
+
+        try:
+            self._hw_manager = HardwareManager(device_list)
+            return self._hw_manager.open()
+        except RuntimeError as exc:
+            print_box(f"\n{exc}\n")
+            # Typed error instead of sys.exit so a GUI/RPC caller is not killed; the CLI catches it
+            # at the top level and exits 1 (see cli.run_cli).
+            raise BpodConnectionError(str(exc)) from exc
 
     def persist_settings(self):
         data = {

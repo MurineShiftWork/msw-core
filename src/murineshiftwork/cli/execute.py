@@ -205,16 +205,11 @@ def run_task(**args_dict):
     else:
         device_list = []
 
-    if device_list:
-        from murineshiftwork.hardware.manager import HardwareManager
-
-        with HardwareManager(device_list) as devices:
-            if "bpod" in devices:
-                args_dict["bpod"] = devices["bpod"]
-            args_dict["devices"] = devices
-            mod.run_task(**args_dict)
-    else:
-        mod.run_task(**args_dict)
+    # The device collection is opened INSIDE TaskProcess (after the session folder exists, which
+    # bpod needs for its pybpod workspace), so pass the unopened descriptors through and let
+    # TaskProcess own the open/close lifecycle.
+    args_dict["device_list"] = device_list
+    mod.run_task(**args_dict)
 
     logging.debug("Task finished.")
 
