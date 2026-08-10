@@ -3,6 +3,7 @@ import contextlib
 import faulthandler
 import json
 import logging
+import os
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +20,32 @@ _CENTRAL_LOG_DIR = Path("~/.murineshiftwork/logs").expanduser()
 _MAX_LOG_FILES = 100
 
 
+def _prune_central_logs() -> None:
+    """Cap the central log dir: keep the newest run logs, and drop empty (non-crash) fault logs.
+
+    Run logs are pruned to the newest ``_MAX_LOG_FILES``. ``.fault.log`` files are kept only when
+    NON-empty (a real crash dump worth reviewing); an EMPTY one means the process was killed without
+    a clean exit (e.g. SIGTERM) but did not crash, so atexit never removed its empty startup file.
+    """
+    run_logs = sorted(
+        p for p in _CENTRAL_LOG_DIR.glob("*.log") if not p.name.endswith(".fault.log")
+    )
+    for old in run_logs[:-_MAX_LOG_FILES]:
+        with contextlib.suppress(OSError):
+            old.unlink()
+    for fault in _CENTRAL_LOG_DIR.glob("*.fault.log"):
+        with contextlib.suppress(OSError):
+            if fault.stat().st_size == 0:
+                fault.unlink()
+
+
+def _disable_faulthandler_in_child() -> None:
+    """Runs in a freshly forked child: stop inheriting the parent's faulthandler so the child's own
+    crashes do not pollute the session fault log."""
+    with contextlib.suppress(Exception):
+        faulthandler.disable()
+
+
 def _enable_fault_log(central_log_path: Path) -> tuple[Path, Callable[[], None]]:
     """Capture native crashes (SIGSEGV/SIGABRT/SIGFPE/SIGBUS) to a ``.fault.log`` beside the run log.
 
@@ -33,6 +60,14 @@ def _enable_fault_log(central_log_path: Path) -> tuple[Path, Callable[[], None]]
     # kept open for faulthandler's lifetime; closed by the atexit hook below
     fault_file = fault_log_path.open("w")  # noqa: SIM115
     faulthandler.enable(file=fault_file, all_threads=True)
+
+    # A forked child (online-plot / relay subprocess) inherits this faulthandler and its open file,
+    # so the child's OWN fatal signal - e.g. a Qt plot subprocess aborting on a headless host - would
+    # be written into the session fault log and read as a session crash. Disable faulthandler in any
+    # child so the fault log reflects only THIS (main) process. Unix-only: Windows has no fork (it
+    # uses spawn, where children do not inherit this), so the problem does not arise there.
+    if hasattr(os, "register_at_fork"):
+        os.register_at_fork(after_in_child=_disable_faulthandler_in_child)
 
     def _remove_fault_log_on_clean_exit() -> None:
         with contextlib.suppress(Exception):
@@ -74,16 +109,7 @@ def setup_logging(level=None, log_file=None, task="", subject="", setup=""):
         _parts = [p for p in [setup, dt, subject, task] if p]
         stem = "--".join(_parts)
         central_log_path = _CENTRAL_LOG_DIR / f"{stem}.log"
-        # Prune run logs, but NOT .fault.log files - those are rare (only left by a crash)
-        # and worth keeping until reviewed/cleaned by hand.
-        all_logs = sorted(
-            p
-            for p in _CENTRAL_LOG_DIR.glob("*.log")
-            if not p.name.endswith(".fault.log")
-        )
-        for old in all_logs[:-_MAX_LOG_FILES]:
-            with contextlib.suppress(OSError):
-                old.unlink()
+        _prune_central_logs()
 
     # encoding="utf-8": on Windows a FileHandler defaults to the locale codec (cp1252)
     # and raises UnicodeEncodeError on non-latin-1 log text (e.g. a "->" arrow, "µ").
