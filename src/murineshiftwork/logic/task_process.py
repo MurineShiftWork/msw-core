@@ -8,6 +8,7 @@ from threading import Thread
 from typing import Any
 
 import yaml
+from murineshiftwork.io import JsonlTrialDataWriter
 from murineshiftwork.namespace import msw_file
 from murineshiftwork.namespace.manifest import (
     append_acquisition_to_session,
@@ -39,7 +40,6 @@ from murineshiftwork.logic.misc import (
 )
 from murineshiftwork.logic.paths import test_path_is_writable
 from murineshiftwork.logic.reward_metadata import build_reward_metadata
-from murineshiftwork.logic.trial_writer import JsonlTrialDataWriter
 
 
 def _resolve_hook_setup(run_context, execution_config):

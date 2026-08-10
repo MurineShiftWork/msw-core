@@ -1,89 +1,16 @@
-"""The swappable trial-data writer and its behaviour-preserving JSONL implementation."""
+"""The trial-data writer moved to msw-io; msw-core keeps a backward-compatible re-export.
+
+The classes and their byte-identity behaviour are tested in msw-io. Here we only verify the
+`murineshiftwork.logic.trial_writer` shim still re-exports the same objects, so existing importers
+(TaskProcess, downstream task tests) keep working.
+"""
 
 from __future__ import annotations
 
-import numpy as np
-import pytest
-from murineshiftwork.io import save_trial_data
 
-from murineshiftwork.logic.trial_writer import JsonlTrialDataWriter, TrialDataWriter
+def test_logic_shim_reexports_the_io_classes():
+    from murineshiftwork import io
+    from murineshiftwork.logic import trial_writer
 
-# A trial dict that exercises the codec's tricky bits: float rounding, numpy arrays,
-# tuples (which the codec encodes specially), and nested structure.
-_TRIALS = [
-    {"trial_index": 0, "outcome": "hit", "p": 1.23456789, "arr": np.array([1, 2, 3])},
-    {"trial_index": 1, "outcome": "miss", "block": (0.5, 0.5), "info": {"n": 7}},
-    {"trial_index": 2, "outcome": "no_response", "liquid": 0.0},
-]
-
-
-def test_jsonl_writer_is_byte_identical_to_save_trial_data(tmp_path):
-    """Per-trial emit through the writer must produce the exact bytes of a single batch save."""
-    via_writer = tmp_path / "writer.df.jsonl"
-    with JsonlTrialDataWriter(via_writer) as w:
-        for trial in _TRIALS:
-            w.write_trial(trial)
-
-    via_batch = tmp_path / "batch.df.jsonl"
-    save_trial_data(_TRIALS, via_batch)
-
-    assert via_writer.read_bytes() == via_batch.read_bytes()
-
-
-def test_writer_rewrites_whole_file_each_trial(tmp_path):
-    """After trial N the file holds exactly the first N trials (whole-file-rewrite semantics)."""
-    path = tmp_path / "df.jsonl"
-    writer = JsonlTrialDataWriter(path)
-    writer.open()
-    for n, trial in enumerate(_TRIALS, start=1):
-        writer.write_trial(trial)
-        snapshot = tmp_path / f"snap{n}.jsonl"
-        save_trial_data(_TRIALS[:n], snapshot)
-        assert path.read_bytes() == snapshot.read_bytes()
-        assert writer.trial_count == n
-
-
-def test_write_all_matches_save_trial_data(tmp_path):
-    """The whole-list write is byte-identical to a direct save of the same list."""
-    via_writer = tmp_path / "writer.df.jsonl"
-    writer = JsonlTrialDataWriter(via_writer)
-    writer.open()
-    writer.write_all(_TRIALS)
-
-    via_batch = tmp_path / "batch.df.jsonl"
-    save_trial_data(_TRIALS, via_batch)
-
-    assert via_writer.read_bytes() == via_batch.read_bytes()
-    assert writer.trial_count == len(_TRIALS)
-
-
-def test_write_all_replaces_prior_contents(tmp_path):
-    """A later, shorter write_all fully replaces an earlier one (no stale trailing trials)."""
-    path = tmp_path / "df.jsonl"
-    writer = JsonlTrialDataWriter(path)
-    writer.open()
-    writer.write_all(_TRIALS)
-    writer.write_all(_TRIALS[:1])
-
-    expected = tmp_path / "expected.jsonl"
-    save_trial_data(_TRIALS[:1], expected)
-    assert path.read_bytes() == expected.read_bytes()
-    assert writer.trial_count == 1
-
-
-def test_trial_count_starts_at_zero(tmp_path):
-    """An unused writer reports zero trials - the signal the framework uses to skip finalising."""
-    writer = JsonlTrialDataWriter(tmp_path / "df.jsonl")
-    assert writer.trial_count == 0
-
-
-def test_open_creates_parent_dirs(tmp_path):
-    nested = tmp_path / "a" / "b" / "df.jsonl"
-    JsonlTrialDataWriter(nested).open()
-    assert nested.parent.is_dir()
-
-
-def test_is_a_trial_data_writer():
-    assert issubclass(JsonlTrialDataWriter, TrialDataWriter)
-    with pytest.raises(TypeError):
-        TrialDataWriter()  # ABC: cannot instantiate directly
+    assert trial_writer.TrialDataWriter is io.TrialDataWriter
+    assert trial_writer.JsonlTrialDataWriter is io.JsonlTrialDataWriter
