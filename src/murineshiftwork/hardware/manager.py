@@ -5,7 +5,8 @@ HardwareManager: opens/closes a list of devices; returns handles dict.
 
 Usage (controller or CLI):
     with HardwareManager([BpodDevice(port)]) as devices:
-        TaskProcess(..., bpod=devices["bpod"])
+        # `devices` is a DeviceCollection (a dict of {name: handle}); pass it to the task
+        TaskProcess(..., devices=devices)
 
 Bpod is the first concrete implementation.  Future devices (Harp, PyControl,
 Scale, PulsePal) implement the same protocol; tasks receive only the handle
@@ -26,8 +27,8 @@ log = logging.getLogger(__name__)
 class DeviceProtocol(Protocol):
     """Structural interface for a managed hardware device.
 
-    Implementations must be usable as a context manager so HardwareManager
-    can stack them with contextlib.ExitStack.
+    HardwareManager drives the lifecycle explicitly via ``preflight`` → ``connect`` →
+    ``disconnect``; implementations need not be context managers themselves.
     """
 
     name: str
@@ -146,13 +147,20 @@ class HardwareManager:
         self._opened: list[DeviceProtocol] = []
 
     def open(self) -> DeviceCollection:
-        for device in self._devices:
-            log.info("Hardware preflight: %s", device.name)
-            device.preflight()
-            log.info("Hardware connect: %s", device.name)
-            device.connect()
-            self._opened.append(device)
-            log.info("Hardware ready: %s", device.name)
+        try:
+            for device in self._devices:
+                log.info("Hardware preflight: %s", device.name)
+                device.preflight()
+                log.info("Hardware connect: %s", device.name)
+                device.connect()
+                self._opened.append(device)
+                log.info("Hardware ready: %s", device.name)
+        except Exception:
+            # A later device failing must not leak the ones already opened: __enter__ has not
+            # returned, so the caller's `with` block (and its __exit__) never runs. Tear down what
+            # opened before re-raising.
+            self.close()
+            raise
         return DeviceCollection(self._opened)
 
     def close(self) -> None:
