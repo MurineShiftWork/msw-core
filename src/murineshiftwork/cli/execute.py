@@ -134,15 +134,14 @@ def _build_sim_device_list(ctx: RunContext) -> list:
     return sims
 
 
-def _apply_stage_position(args_dict: dict) -> None:
+def _apply_stage_position(ctx: RunContext) -> None:
     """Move stage to the named position from task settings before task starts."""
-    patched = args_dict.get("settings.task.patched", {})
-    position_name = patched.get("stage_position")
-    serial_port_stage = args_dict.get("serial_port_stage", "")
+    position_name = ctx.task_settings.get("stage_position")
+    serial_port_stage = ctx.ports.stage
     if not position_name or not serial_port_stage:
         return
 
-    calib_path = Path(patched.get("calibration_file_stage", "")).expanduser()
+    calib_path = Path(ctx.task_settings.get("calibration_file_stage", "")).expanduser()
     if not calib_path.exists():
         logging.warning(
             f"stage_position '{position_name}' set but calibration file not found: {calib_path}"
@@ -181,13 +180,13 @@ def run_task(**args_dict):
     from murineshiftwork.logic.log import suppress_third_party_console_handlers
 
     suppress_third_party_console_handlers()  # catch handlers added at import time
-    _apply_stage_position(args_dict)
-    task_name = args_dict["task"]
-    mod = importlib.import_module(f"murineshiftwork.tasks.{task_name}.task")
 
     # Resolved run context; fall back to building one if evaluate_args did not (e.g. a direct
-    # call). The task boundary below still receives the full **args_dict.
+    # call). Reads below come off the typed context; the task boundary still receives **args_dict.
     ctx = args_dict.get("run_context") or RunContext.from_args_dict(args_dict)
+
+    _apply_stage_position(ctx)
+    mod = importlib.import_module(f"murineshiftwork.tasks.{ctx.task_name}.task")
 
     # Which devices to open for this run. A caller that injected a bpod owns hardware itself;
     # otherwise build the collection - simulation stand-ins under --simulate, real devices when a
