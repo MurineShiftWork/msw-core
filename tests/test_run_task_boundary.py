@@ -54,12 +54,14 @@ def _simulate_args() -> dict:
     }
 
 
-def test_boundary_passes_through_all_input_keys_plus_device_list(monkeypatch):
+def test_boundary_is_input_keys_plus_device_list_and_context_projection(monkeypatch):
     args = _simulate_args()
+    ctx = args["run_context"]
     captured = _capture_boundary(monkeypatch, args)
 
-    # Today's contract: run_task forwards every input key unchanged and adds `device_list`.
-    assert set(captured) == set(args) | {"device_list"}
+    # Contract: run_task forwards every input key, adds `device_list`, and overlays the RunContext
+    # projection (to_task_kwargs) - the authoritative source for the identity + port keys it owns.
+    assert set(captured) == set(args) | {"device_list"} | set(ctx.to_task_kwargs())
 
 
 def test_boundary_preserves_scalar_values_and_context(monkeypatch):
