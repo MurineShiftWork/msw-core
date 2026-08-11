@@ -14,19 +14,18 @@ def preflight_hardware_check(args_dict: dict) -> None:
     Raises RuntimeError listing ALL failing checks so the user can fix them at once.
     Skipped entirely when ``debug=True`` or subject is ``_test_subject``.
     """
-    if (
-        args_dict.get("simulate")
-        or args_dict.get("debug")
-        or args_dict.get("subject") == "_test_subject"
-    ):
+    ctx = args_dict.get("run_context") or RunContext.from_args_dict(args_dict)
+    if ctx.simulate or ctx.debug or ctx.subject == "_test_subject":
         return
 
     errors: list[str] = []
+    # setup_config and settings.task.patched are not RunContext-owned scalar keys (the latter is
+    # the hook-mutable dict), so they stay dict reads; only the scalar identity + ports come off ctx.
     setup_config = args_dict.get("setup_config")
     task_settings = args_dict.get("settings.task.patched", {})
 
     # --- Output directory writable ---
-    out_path = Path(args_dict.get("out_path", ""))
+    out_path = Path(ctx.out_path)
     try:
         out_path.mkdir(parents=True, exist_ok=True)
     except Exception as exc:
@@ -42,7 +41,6 @@ def preflight_hardware_check(args_dict: dict) -> None:
     # openable. Port resolution matches the session's device build: run context by type, then by
     # name, then the config's own device_port. Without a setup, still check the CLI bpod port.
     if setup_config is not None:
-        ctx = args_dict.get("run_context") or RunContext.from_args_dict(args_dict)
         for dev_name, dev_cfg in getattr(setup_config, "devices", {}).items():
             port = ctx.ports.get(dev_cfg.type) or ctx.ports.get(dev_name)
             if not port:
@@ -51,7 +49,7 @@ def preflight_hardware_check(args_dict: dict) -> None:
             if port and not test_serial_port_is_accessible(port):
                 errors.append(f"{dev_name} serial port not accessible: {port!r}")
     else:
-        bpod_port = args_dict.get("serial_port_bpod", "")
+        bpod_port = ctx.ports.bpod
         if bpod_port and not test_serial_port_is_accessible(bpod_port):
             errors.append(f"bpod serial port not accessible: {bpod_port!r}")
 

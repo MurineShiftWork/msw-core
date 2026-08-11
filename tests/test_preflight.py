@@ -28,9 +28,18 @@ def _accessible(monkeypatch, ok):
 
 
 def _args(tmp_path, setup, ports, **extra):
+    # preflight reads the scalar identity + ports off the RunContext (as real flow does), so build a
+    # ctx carrying them; setup_config stays a plain dict key (it's not a RunContext-owned scalar).
+    ctx = RunContext(
+        ports=ports,
+        out_path=str(tmp_path),
+        subject=extra.get("subject", "s"),
+        simulate=bool(extra.get("simulate", False)),
+        debug=bool(extra.get("debug", False)),
+    )
     d = {
         "setup_config": setup,
-        "run_context": RunContext(ports=ports),
+        "run_context": ctx,
         "settings.task.patched": {},
         "out_path": str(tmp_path),
     }
