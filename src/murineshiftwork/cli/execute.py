@@ -208,7 +208,12 @@ def run_task(**args_dict):
     # bpod needs for its pybpod workspace), so pass the unopened descriptors through and let
     # TaskProcess own the open/close lifecycle.
     args_dict["device_list"] = device_list
-    mod.run_task(**args_dict)
+    # RunContext is the authoritative source for the resolved identity + ports it owns: overlay its
+    # projection onto the boundary so the task receives ctx-resolved values (the rest of args_dict -
+    # task_settings, config paths, runtime objects - flows unchanged). to_task_kwargs is now the LIVE
+    # frozen boundary projection (pinned by test_run_task_boundary), the seam later phases use to
+    # stop evaluate populating these keys.
+    mod.run_task(**{**args_dict, **ctx.to_task_kwargs()})
 
     logging.debug("Task finished.")
 
