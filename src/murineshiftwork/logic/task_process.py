@@ -484,8 +484,12 @@ class TaskProcess:
         setup + ports, or the sim stand-ins under ``--simulate``). As a fallback for a
         ``require_bpod`` run with no declared list, a lone bpod device is built from the serial port
         (or a ``SimBpod`` under simulate) - this is what replaced the old ``connect_bpod`` path.
-        Bpod receives the session folder as its pybpod workspace. Returns the opened
-        ``DeviceCollection``, or ``None`` when there is nothing to open.
+        Returns the opened ``DeviceCollection``, or ``None`` when there is nothing to open.
+
+        Bpod is opened WITHOUT a pybpod workspace (``workspace_path=None``), matching the pre-#63
+        device-collection path. Setting the workspace makes pybpod keep a persistent Session, which -
+        with a task that builds a new StateMachine every trial - segfaults during GC on real
+        hardware (the ``connect_bpod`` path set it, but the collection path the rigs ran never did).
         """
         from murineshiftwork.hardware.bpod.device import BpodDevice
         from murineshiftwork.hardware.manager import HardwareManager
@@ -498,13 +502,6 @@ class TaskProcess:
                 device_list = [BpodDevice(self.serial_port)]
         if not device_list:
             return None
-
-        for dev in device_list:
-            if getattr(dev, "name", "") == "bpod" and hasattr(dev, "set_workspace"):
-                dev.set_workspace(
-                    self.session_paths["session_folder"],
-                    self.session_paths["session_basename"] + ".msw",
-                )
 
         try:
             self._hw_manager = HardwareManager(device_list)
