@@ -62,6 +62,11 @@ class StereoSound:
     default_sound_device = "XONAR SOUND CARD"
     default_ttl_channel = 1  # choices: 0 or 1 -> idx of position on
     default_ttl_duration = 0.001  # 1 ms
+    # How the two output channels are filled (see _make_sound):
+    #   "both" -> the tone on both channels (playback works on either wired output)
+    #   "ttl"  -> the tone on one channel, a full-scale sync level (held for the tone
+    #             duration) on ttl_channel, for a hardware onset marker into a BNC/DAQ
+    default_channel_mode = "both"
     default_sound_channels = 2  # stereo
     default_sound_latency = "low"
     # WASAPI exclusive mode bypasses the Windows mixer for the lowest latency,
@@ -78,6 +83,7 @@ class StereoSound:
         sample_rate: int | None = None,
         ttl_channel: int = 1,
         ttl_duration: float = 0.001,
+        channel_mode: str | None = None,
         allow_sys_default_device=True,
         **kwargs,
     ):
@@ -204,6 +210,7 @@ class StereoSound:
             )
 
         self.ttl_duration = ttl_duration or self.default_ttl_duration
+        self.channel_mode = channel_mode or self.default_channel_mode
 
         dev_name = _dev_dict.get("name", self.sound_device)
         logging.info(
@@ -381,13 +388,18 @@ class StereoSound:
         amplitude=None,
         fade_duration=0.01,
         bup_rate: float = 5.0,
+        channel_mode: str | None = None,
     ):
         """Build a stereo sound array.
 
         frequency=-2 → bup train (MATLAB MakeBupperSwoop style, broadband clicks).
         frequency=-1 → white noise.
         frequency>0  → pure sine tone.
+
+        channel_mode selects how the two output channels are filled ("both" or
+        "ttl"; see the class docstring). Defaults to the instance channel_mode.
         """
+        channel_mode = channel_mode or self.channel_mode
         if frequency == -2:
             mono = self._make_bup_train(
                 bup_rate=bup_rate, duration=duration, amplitude=amplitude
@@ -406,15 +418,23 @@ class StereoSound:
             win[-len_fade:] = fade_io[len_fade:]
             mono = mono * win
 
-        null = np.zeros(len(mono))
-        if self.ttl_channel == 0:
-            return np.array([mono, null]).T
-        elif self.ttl_channel == 1:
-            return np.array([null, mono]).T
-        else:
-            raise ValueError(
-                f"'ttl_channel' has to be 0 or 1 for stereo output, but '{self.ttl_channel}' given"
-            )
+        if channel_mode == "both":
+            # Tone on both channels: playback no longer depends on which physical
+            # output (L/R conductor) is wired to the speaker or measurement input.
+            return np.array([mono, mono]).T
+        if channel_mode == "ttl":
+            # Tone on the audio channel; a full-scale sync level held for the tone
+            # duration on ttl_channel. The onset step is a sharp edge that trips a
+            # digital BNC/DAQ input reliably (a sine only briefly peaks near the
+            # rail). Audio outputs are AC-coupled, so the plateau decays toward zero
+            # over the tone - the onset (and offset) edges are what mark tone on/off.
+            ttl = np.ones(len(mono), dtype=float)  # +full scale
+            if self.ttl_channel == 1:
+                return np.array([mono, ttl]).T
+            return np.array([ttl, mono]).T
+        raise ValueError(
+            f"channel_mode has to be 'both' or 'ttl', but '{channel_mode}' given"
+        )
 
     def register_new_sound(
         self,
@@ -424,6 +444,7 @@ class StereoSound:
         fade_duration=0.01,
         play_blocking=True,
         bup_rate: float = 5.0,
+        channel_mode: str | None = None,
         **kwargs,
     ):
         """ """
@@ -435,6 +456,7 @@ class StereoSound:
             amplitude=amplitude,
             fade_duration=fade_duration,
             bup_rate=bup_rate,
+            channel_mode=channel_mode,
         )
 
         # 1-indexed: Bpod SoftCode 0 is not a valid user softcode
