@@ -22,6 +22,58 @@ def _bare_stereo() -> StereoSound:
     return s
 
 
+def _bare_for_make(channel_mode="both", ttl_channel=1, sample_rate=1000) -> StereoSound:
+    # Bypass __init__ (needs audio hardware) to exercise the pure _make_sound path.
+    s = StereoSound.__new__(StereoSound)
+    s.sample_rate = sample_rate
+    s.ttl_channel = ttl_channel
+    s.channel_mode = channel_mode
+    return s
+
+
+def test_make_sound_both_duplicates_tone_on_each_channel():
+    s = _bare_for_make(channel_mode="both")
+    buf = s._make_sound(frequency=200, duration=0.05, amplitude=1.0)
+    assert buf.shape[1] == 2
+    assert np.array_equal(buf[:, 0], buf[:, 1])  # identical on both channels
+    assert np.abs(buf).max() > 0  # actually a tone, not silence
+
+
+def test_make_sound_ttl_puts_full_scale_marker_on_ttl_channel():
+    s = _bare_for_make(channel_mode="ttl", ttl_channel=1)
+    buf = s._make_sound(frequency=200, duration=0.05, amplitude=0.3)
+    tone, ttl = buf[:, 0], buf[:, 1]
+    assert np.allclose(ttl, 1.0)  # full-scale sync level held for the tone
+    assert (
+        np.abs(tone).max() > 0 and np.abs(tone).max() <= 0.3
+    )  # tone respects amplitude
+
+
+def test_make_sound_ttl_respects_channel_index():
+    s = _bare_for_make(channel_mode="ttl", ttl_channel=0)
+    buf = s._make_sound(frequency=200, duration=0.05, amplitude=0.3)
+    assert np.allclose(buf[:, 0], 1.0)  # ttl on channel 0
+    assert np.abs(buf[:, 1]).max() > 0  # tone on channel 1
+
+
+def test_make_sound_rejects_unknown_channel_mode():
+    s = _bare_for_make(channel_mode="nonsense")
+    import pytest
+
+    with pytest.raises(ValueError, match="channel_mode"):
+        s._make_sound(frequency=200, duration=0.05, amplitude=1.0)
+
+
+def test_register_new_sound_uses_instance_channel_mode_by_default():
+    s = _bare_for_make(channel_mode="both")
+    s._sounds = {}
+    code = s.register_new_sound(frequency=200, duration=0.05, amplitude=1.0)
+    buf = s._sounds[code]["sound"]
+    assert np.array_equal(
+        buf[:, 0], buf[:, 1]
+    )  # 'both' applied without an explicit arg
+
+
 def test_callback_emits_silence_when_no_buffer():
     s = _bare_stereo()
     out = np.full((4, 2), 9.0, dtype="float32")
