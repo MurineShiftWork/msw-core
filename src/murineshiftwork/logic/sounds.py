@@ -81,7 +81,7 @@ class StereoSound:
         self,
         sound_device: str | None = None,
         sample_rate: int | None = None,
-        ttl_channel: int = 1,
+        ttl_channel: int | None = None,
         ttl_duration: float = 0.001,
         channel_mode: str | None = None,
         allow_sys_default_device=True,
@@ -203,7 +203,10 @@ class StereoSound:
                 self.sample_rate = _fallback_sr
                 self.use_wasapi_exclusive = False
 
-        self.ttl_channel = ttl_channel or self.default_ttl_channel
+        # `or` would clobber a valid ttl_channel=0 to the default; select on None instead.
+        self.ttl_channel = (
+            self.default_ttl_channel if ttl_channel is None else ttl_channel
+        )
         if self.ttl_channel != 0 and self.ttl_channel != 1:
             raise ValueError(
                 f"'ttl_channel' has to be 0 or 1 for stereo output, but '{self.ttl_channel}' given"

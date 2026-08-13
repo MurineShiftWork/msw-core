@@ -125,6 +125,23 @@ def test_default_output_fallback_not_sysdefault(monkeypatch):
     assert s.sample_rate == 48000
 
 
+def test_ttl_channel_zero_is_not_clobbered_to_default(monkeypatch):
+    """ttl_channel=0 is a valid channel index; it must survive __init__ (was lost to `or default`)."""
+    import sys
+    import types
+
+    dev = {"name": "X", "default_samplerate": 48000.0}
+    fake_sd = types.SimpleNamespace(check_output_settings=lambda **kw: None)
+    monkeypatch.setitem(sys.modules, "sounddevice", fake_sd)
+    monkeypatch.setattr(
+        "murineshiftwork.logic.sounds.find_sound_device", lambda **kw: (5, dev)
+    )
+
+    assert StereoSound(sound_device="X", ttl_channel=0).ttl_channel == 0
+    # omitted -> falls back to the class default
+    assert StereoSound(sound_device="X").ttl_channel == StereoSound.default_ttl_channel
+
+
 def test_falls_back_to_default_rate_when_device_rejects(monkeypatch):
     """Device found but rejecting the configured rate (e.g. XONAR 192000 when its
     driver/Windows format is not at 192000): fall back to the device default so
