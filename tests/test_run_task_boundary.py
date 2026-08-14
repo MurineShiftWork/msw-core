@@ -59,9 +59,17 @@ def test_boundary_is_input_keys_plus_device_list_and_context_projection(monkeypa
     ctx = args["run_context"]
     captured = _capture_boundary(monkeypatch, args)
 
-    # Contract: run_task forwards every input key, adds `device_list`, and overlays the RunContext
-    # projection (to_task_kwargs) - the authoritative source for the identity + port keys it owns.
-    assert set(captured) == set(args) | {"device_list"} | set(ctx.to_task_kwargs())
+    # Contract: run_task forwards every input key, adds `device_list`, overlays the RunContext
+    # projection (to_task_kwargs), and drops the non-bpod device ports (Cycle D Step 4 - they are
+    # resolved into the device collection, not read task-side). serial_port_bpod stays.
+    dropped = {"serial_port_stage", "serial_port_scale", "serial_port_pulsepal"}
+    assert set(captured) == (set(args) - dropped) | {"device_list"} | set(
+        ctx.to_task_kwargs()
+    )
+    assert dropped.isdisjoint(
+        captured
+    )  # the three device ports no longer cross the boundary
+    assert "serial_port_bpod" in captured  # bpod port stays (TaskProcess constructor)
 
 
 def test_boundary_preserves_scalar_values_and_context(monkeypatch):

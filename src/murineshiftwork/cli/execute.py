@@ -228,7 +228,12 @@ def run_task(**args_dict):
     # task_settings, config paths, runtime objects - flows unchanged). to_task_kwargs is now the LIVE
     # frozen boundary projection (pinned by test_run_task_boundary), the seam later phases use to
     # stop evaluate populating these keys.
-    mod.run_task(**{**args_dict, **ctx.to_task_kwargs()})
+    boundary_kwargs = {**args_dict, **ctx.to_task_kwargs()}
+    # Cycle D Step 4: non-bpod device ports are resolved into the device collection (ctx.ports drives
+    # construction), so they no longer cross the task boundary. bpod stays - TaskProcess opens it.
+    for _dropped in ("serial_port_stage", "serial_port_scale", "serial_port_pulsepal"):
+        boundary_kwargs.pop(_dropped, None)
+    mod.run_task(**boundary_kwargs)
 
     logging.debug("Task finished.")
 

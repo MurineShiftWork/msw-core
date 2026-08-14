@@ -126,11 +126,12 @@ def test_to_task_kwargs_round_trips_owned_fields():
         "debug",
         "simulate",
         "serial_port_bpod",
-        "serial_port_stage",
-        "serial_port_scale",
-        "serial_port_pulsepal",
     ):
         assert kw[key] == d[key]
+    # non-bpod device ports are no longer projected to the boundary (Cycle D Step 4)
+    assert not {"serial_port_stage", "serial_port_scale", "serial_port_pulsepal"} & set(
+        kw
+    )
     # the boundary key is "task" (the TaskProcess constructor param / what tasks read), not
     # "task_name"; to_task_kwargs is the frozen projection, so it must match the contract key.
     assert kw["task"] == "t"

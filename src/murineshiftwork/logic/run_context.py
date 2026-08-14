@@ -117,10 +117,10 @@ class RunContext(BaseModel):
             "session_type": self.session_type,
             "acq_type": self.acq_type,
             "session_version": self.session_version,
+            # serial_port_bpod stays: TaskProcess takes it as a constructor param for the
+            # no-collection bpod-open fallback. The other device ports are read from the device
+            # collection now (Cycle D), so they no longer cross the task boundary.
             "serial_port_bpod": self.ports.bpod,
-            "serial_port_stage": self.ports.stage,
-            "serial_port_scale": self.ports.scale,
-            "serial_port_pulsepal": self.ports.pulsepal,
         }
 
     def to_execution_config(self) -> ExecutionConfig:
