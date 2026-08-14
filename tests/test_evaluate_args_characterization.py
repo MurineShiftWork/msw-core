@@ -123,16 +123,14 @@ def test_evaluate_args_builds_the_run_context():
 
 
 def test_boundary_projection_vs_resolved_dict():
-    """to_task_kwargs's non-port keys are already in the resolved dict; the serial_port_* keys are
-    the one addition (evaluate omits them for a no-setup run, TaskProcess defaults them to None,
-    to_task_kwargs emits "" - all falsy, so equivalent at the boundary). Pins that relationship."""
+    """to_task_kwargs's non-port keys are already in the resolved dict; serial_port_bpod is the one
+    addition (evaluate omits it for a no-setup run, TaskProcess defaults it to None, to_task_kwargs
+    emits "" - both falsy, so equivalent at the boundary). Non-bpod device ports are no longer
+    projected (Cycle D Step 4 - read from the device collection). Pins that relationship."""
     out = _run_evaluate()
     tk = out["run_context"].to_task_kwargs()
     port_keys = {
-        "serial_port_bpod",
-        "serial_port_stage",
-        "serial_port_scale",
-        "serial_port_pulsepal",
-    }
+        "serial_port_bpod"
+    }  # non-bpod ports dropped from the task-facing projection
     assert set(tk) - port_keys <= set(out)
-    assert set(tk) - set(out) == port_keys  # the only keys to_task_kwargs adds
+    assert set(tk) - set(out) == port_keys  # the only key to_task_kwargs adds
