@@ -71,11 +71,26 @@ def _make_sim_scale(cfg: Any) -> Any:
     return ScaleDevice(serial_port="", scale_type="sim")
 
 
-# Simulation factories for device types that have a hardware-free stand-in. Types without one
-# (pulsepal, stage) are omitted from the sim collection - the task handles those in simulation.
+def _make_sim_pulsepal(cfg: Any) -> Any:
+    from murineshiftwork.hardware.pulsepal.device import PulsePalDevice
+
+    return PulsePalDevice(serial_port="", simulate=True)
+
+
+def _make_sim_stage(cfg: Any) -> Any:
+    from murineshiftwork.hardware.stage import StageDevice
+
+    return StageDevice(serial_port="", simulate=True)
+
+
+# Simulation factories: a hardware-free stand-in per device type, so a task receives the same
+# device collection under --simulate as it would on hardware (keyed by device type, as the real
+# registry is).
 _SIM_DEVICE_REGISTRY: dict[str, Callable[[Any], Any]] = {
     "bpod": _make_sim_bpod,
     "scale": _make_sim_scale,
+    "pulsepal": _make_sim_pulsepal,
+    "stage_tower": _make_sim_stage,
 }
 
 
@@ -113,12 +128,12 @@ def _build_device_list(ctx: RunContext) -> list:
 
 
 def _build_sim_device_list(ctx: RunContext) -> list:
-    """Simulation wrappers for the required devices that have a stand-in (bpod, scale).
+    """Simulation wrappers for the required devices, each a hardware-free stand-in.
 
     Mirrors :func:`_build_device_list` for ``--simulate``: the task receives the same device
-    collection it would on hardware, but the devices are hardware-free (SimBpod, sim scale).
-    Required devices without a sim factory (pulsepal, stage) are omitted - the task handles those
-    in simulation. Falls back to a lone sim bpod when there is no setup.
+    collection it would on hardware, but the devices are hardware-free (SimBpod, sim scale,
+    :class:`SimPulsePal`, :class:`SimStage`). A required device type with no sim factory is
+    omitted. Falls back to a lone sim bpod when there is no setup.
     """
     setup_config = ctx.setup
     required = set(ctx.task_settings.get("required_devices") or ["bpod"])

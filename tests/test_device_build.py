@@ -121,12 +121,13 @@ def test_build_sim_list_selects_devices_with_a_sim_factory():
         {
             "bpod": _Cfg("bpod"),
             "scale": _Cfg("scale"),
-            "stage": _Cfg("stage_tower"),  # no sim factory -> omitted
+            "stage": _Cfg("stage_tower"),  # now has a sim factory (SimStage)
+            "mystery": _Cfg("no_such_type"),  # no sim factory -> omitted
         }
     )
-    ctx = _ctx(setup, ["bpod", "scale", "stage"], DevicePorts())
+    ctx = _ctx(setup, ["bpod", "scale", "stage", "mystery"], DevicePorts())
     sims = execute._build_sim_device_list(ctx)
-    assert sorted(d.name for d in sims) == ["bpod", "scale"]
+    assert sorted(d.name for d in sims) == ["bpod", "scale", "stage"]
 
 
 def test_build_sim_list_defaults_to_bpod_without_setup():
