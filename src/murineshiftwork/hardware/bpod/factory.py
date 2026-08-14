@@ -45,6 +45,9 @@ class BpodFactory:
         self._exiting = False
         self._write_lock = threading.Lock()
         self._port_config = "unknown"
+        # Callbacks run once per iteration of the pybpodapi run loop (same thread as the serial I/O -
+        # the only serial-safe place to inject a live command). See add_loop_handler.
+        self._loop_handlers: list = []
 
     # ------------------------------------------------------------------
     # Context manager
@@ -84,6 +87,8 @@ class BpodFactory:
                 time.sleep(self.retry_delay_s)
             try:
                 self._bpod = self._create_bpod_object()
+                # Route pybpodapi's per-iteration run-loop hook through our registry.
+                self._bpod.loop_handler = self._dispatch_loop_handlers
                 self._connected = True
                 hw = self._bpod._hardware
                 fw = getattr(hw, "firmware_version", "?")
@@ -129,6 +134,28 @@ class BpodFactory:
                 logging.warning("Bpod safe-close error: %s", exc)
             finally:
                 self._connected = False
+
+    # ------------------------------------------------------------------
+    # Run-loop handlers (serial-safe live-command injection point)
+
+    def add_loop_handler(self, fn) -> None:
+        """Register ``fn()`` to run once per iteration of ``run_state_machine``'s poll loop.
+
+        The loop runs in the task thread that owns the serial connection, so a handler is the ONLY
+        serial-safe place to issue a live command mid-trial (a `manual_override`) without racing the
+        state machine's own I/O. Multiple handlers compose; each is called with no arguments and must
+        be quick + non-blocking. See :class:`murineshiftwork.hardware.bpod.injection.LiveInjector`.
+        """
+        self._loop_handlers.append(fn)
+        if self._bpod is not None:
+            self._bpod.loop_handler = self._dispatch_loop_handlers
+
+    def _dispatch_loop_handlers(self) -> None:
+        for fn in self._loop_handlers:
+            try:
+                fn()
+            except Exception:
+                logging.warning("bpod loop handler raised", exc_info=True)
 
     # ------------------------------------------------------------------
     # Proxy all attribute access to the underlying Bpod object
