@@ -1,4 +1,5 @@
 import contextlib
+import datetime
 import logging
 import sys
 from collections.abc import Callable
@@ -282,6 +283,43 @@ def run_init(**args_dict):
 # murineshiftwork setup
 
 
+def _write_yaml(path: Path, data: dict) -> None:
+    """Write ``data`` to ``path`` as YAML with the project's standard dump options."""
+    with path.open("w") as f:
+        yaml.dump(
+            data, f, default_flow_style=False, allow_unicode=True, sort_keys=False
+        )
+
+
+def _rename_config(
+    directory: Path, old_name: str, new_name: str, *, force: bool, label: str
+) -> None:
+    """Rename ``{old_name}.yaml`` → ``{new_name}.yaml`` in ``directory`` and update its ``name``.
+
+    Shared by ``msw setup rename`` and ``msw subject rename``; ``label`` is the capitalised noun
+    used in messages ("Setup"/"Subject").
+    """
+    if not new_name:
+        print_box("--new-name is required for 'rename'.")
+        return
+    old_path = directory / f"{old_name}.yaml"
+    new_path = directory / f"{new_name}.yaml"
+    if not old_path.exists():
+        print_box(f"{label} '{old_name}' not found at {old_path}.")
+        return
+    if new_path.exists() and not force:
+        print_box(
+            f"{label} '{new_name}' already exists at {new_path}. Use --force to overwrite."
+        )
+        return
+    old_path.rename(new_path)
+    with new_path.open() as f:
+        raw = yaml.safe_load(f) or {}
+    raw["name"] = new_name
+    _write_yaml(new_path, raw)
+    print_box(f"Renamed {label.lower()} '{old_name}' -> '{new_name}'.")
+
+
 def run_setup(**args_dict):
     """Create or show setup configs."""
     subcommand = args_dict["subcommand"]
@@ -326,14 +364,7 @@ def run_setup(**args_dict):
             name=setup_name,
             devices={"bpod": bpod_device},
         ).model_dump()
-        with path.open("w") as f:
-            yaml.dump(
-                skeleton,
-                f,
-                default_flow_style=False,
-                allow_unicode=True,
-                sort_keys=False,
-            )
+        _write_yaml(path, skeleton)
         print_box(
             f"Created setup config skeleton: {path}\nEdit the file to fill in {port_hint}."
         )
@@ -353,35 +384,19 @@ def run_setup(**args_dict):
 
     elif subcommand == "rename":
         setup_name = args_dict["setup_name"]
-        new_name = args_dict.get("new_name", "")
         if not setup_name:
             print(
                 "Error: setup name is required. Usage: msw setup rename <name> --new-name <new>",
                 file=sys.stderr,
             )
             sys.exit(1)
-        if not new_name:
-            print_box("--new-name is required for 'rename'.")
-            return
-        old_path = setups_dir / f"{setup_name}.yaml"
-        new_path = setups_dir / f"{new_name}.yaml"
-        if not old_path.exists():
-            print_box(f"Setup '{setup_name}' not found at {old_path}.")
-            return
-        if new_path.exists() and not args_dict.get("force", False):
-            print_box(
-                f"Setup '{new_name}' already exists at {new_path}. Use --force to overwrite."
-            )
-            return
-        old_path.rename(new_path)
-        with new_path.open() as f:
-            raw = yaml.safe_load(f) or {}
-        raw["name"] = new_name
-        with new_path.open("w") as f:
-            yaml.dump(
-                raw, f, default_flow_style=False, allow_unicode=True, sort_keys=False
-            )
-        print_box(f"Renamed setup '{setup_name}' -> '{new_name}'.")
+        _rename_config(
+            setups_dir,
+            setup_name,
+            args_dict.get("new_name", ""),
+            force=args_dict.get("force", False),
+            label="Setup",
+        )
 
     else:
         raise ValueError(f"Unknown setup subcommand: {subcommand!r}")
@@ -403,9 +418,9 @@ def run_subject(**args_dict):
         if not subject_name or not subject_name.strip():
             print(
                 "Error: subject name is required. Usage: msw subject add -s <name>",
-                file=__import__("sys").stderr,
+                file=sys.stderr,
             )
-            __import__("sys").exit(1)
+            sys.exit(1)
         path = subjects_dir / f"{subject_name}.yaml"
         if path.exists() and not args_dict.get("force", False):
             print_box(f"Subject '{subject_name}' already exists at {path}.")
@@ -413,23 +428,14 @@ def run_subject(**args_dict):
 
         data = {
             "name": subject_name,
-            "registered": __import__("datetime")
-            .datetime.now()
-            .isoformat(timespec="seconds"),
+            "registered": datetime.datetime.now().isoformat(timespec="seconds"),
             "project": args_dict.get("project", ""),
             "experiment": args_dict.get("experiment", ""),
             "comment": args_dict.get("comment", ""),
             "aliases": [],
             "task_overrides": {},
         }
-        with path.open("w") as f:
-            yaml.dump(
-                data,
-                f,
-                default_flow_style=False,
-                allow_unicode=True,
-                sort_keys=False,
-            )
+        _write_yaml(path, data)
         print_box(f"Registered subject '{subject_name}' at {path}")
 
     elif subcommand == "list":
@@ -443,34 +449,13 @@ def run_subject(**args_dict):
         )
 
     elif subcommand == "rename":
-        subject_name = args_dict["subject"]
-        new_name = args_dict.get("new_name", "")
-        if not new_name:
-            print_box("--new-name is required for 'rename'.")
-            return
-        old_path = subjects_dir / f"{subject_name}.yaml"
-        new_path = subjects_dir / f"{new_name}.yaml"
-        if not old_path.exists():
-            print_box(f"Subject '{subject_name}' not found at {old_path}.")
-            return
-        if new_path.exists() and not args_dict.get("force", False):
-            print_box(
-                f"Subject '{new_name}' already exists at {new_path}. Use --force to overwrite."
-            )
-            return
-        old_path.rename(new_path)
-        with new_path.open() as f:
-            raw = yaml.safe_load(f) or {}
-        raw["name"] = new_name
-        with new_path.open("w") as f:
-            yaml.dump(
-                raw,
-                f,
-                default_flow_style=False,
-                allow_unicode=True,
-                sort_keys=False,
-            )
-        print_box(f"Renamed subject '{subject_name}' -> '{new_name}'.")
+        _rename_config(
+            subjects_dir,
+            args_dict["subject"],
+            args_dict.get("new_name", ""),
+            force=args_dict.get("force", False),
+            label="Subject",
+        )
 
     elif subcommand == "remove":
         subject_name = args_dict["subject"]
