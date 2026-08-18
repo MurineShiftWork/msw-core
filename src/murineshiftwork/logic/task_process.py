@@ -157,17 +157,28 @@ class TaskRunner(Thread):
     def stop(self):
         self.continue_task = False
 
-    def emit_trial(self, trial: dict) -> None:
-        """Persist one scored trial through the framework's trial-data writer.
+    def emit_trial(self, trial: dict, *, relay: dict | None = None) -> None:
+        """Persist one scored trial through the framework, and optionally relay it.
 
-        A migrated task calls this once per scored trial instead of writing the file itself: the
-        durable write goes through the injected ``TrialDataWriter`` (``input_kwargs['trial_writer']``)
-        so the framework owns the destination path and on-disk format. A task that has not migrated
-        never calls this, and the writer stays empty.
+        A migrated task calls this once per scored trial instead of writing the file and pushing to
+        the monitor itself:
+          - the durable write goes through the injected ``TrialDataWriter``
+            (``input_kwargs['trial_writer']``), so the framework owns the destination path and the
+            on-disk format;
+          - if ``relay`` is given (the task's flat monitor event - a different, smaller shape than
+            the stored ``trial``), it is dispatched to the LogAgent relay queue best-effort (a down
+            monitor never interrupts the task).
+
+        A task that has not migrated never calls this, and the writer stays empty.
         """
         writer = self.input_kwargs.get("trial_writer")
         if writer is not None:
             writer.write_trial(trial)
+        if relay is not None:
+            relay_queue = self.input_kwargs.get("relay_queue")
+            if relay_queue is not None:
+                with contextlib.suppress(Exception):
+                    relay_queue.put_nowait(relay)
 
     def get_path(self, artifact: str) -> Path:
         """Return the session file path for *artifact* (e.g. 'df.jsonl', 'log')."""
@@ -397,18 +408,23 @@ class TaskProcess:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         post_exc = None
-        if self._hook_ctx is not None:
-            try:
-                run_post_hooks(self._post_hooks, self._hook_ctx)
-            except SessionAbortError as exc:
-                post_exc = exc
-        status = "aborted" if exc_type is not None else "complete"
-        if self.session_paths:
-            _container = Path(self.session_paths["session_folder"]).parent
-            finalize_acquisition_in_session(
-                _container, self.session_paths["session_basename"], status=status
-            )
-        self.exit_safely()
+        try:
+            if self._hook_ctx is not None:
+                try:
+                    run_post_hooks(self._post_hooks, self._hook_ctx)
+                except SessionAbortError as exc:
+                    post_exc = exc
+            status = "aborted" if exc_type is not None else "complete"
+            if self.session_paths:
+                _container = Path(self.session_paths["session_folder"]).parent
+                finalize_acquisition_in_session(
+                    _container, self.session_paths["session_basename"], status=status
+                )
+        finally:
+            # Always finalise the trial-data write + tear down hardware, even if a post-hook or the
+            # acquisition finalise raised: a session must not end with its df unflushed or a device
+            # left open.
+            self.exit_safely()
         if post_exc is not None:
             raise post_exc
 
