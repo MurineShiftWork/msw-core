@@ -9,6 +9,7 @@ from __future__ import annotations
 import yaml
 
 from murineshiftwork.cli.execute import run_setup, run_subject
+from murineshiftwork.logic.config import SUBJECT_CONFIG_SCHEMA_VERSION
 
 
 def test_setup_create_writes_bpod_skeleton(tmp_path):
@@ -48,6 +49,15 @@ def test_subject_add_writes_registered_and_name(tmp_path):
     assert data["name"] == "m1"
     assert data["registered"]  # ISO timestamp stamped at creation
     assert data["task_overrides"] == {}
+    assert data["schema_version"] == SUBJECT_CONFIG_SCHEMA_VERSION
+
+
+def test_subject_add_carries_no_task_state_until_a_task_writes_one(tmp_path):
+    # task_state is machine-written progress; a subject that has never run a task
+    # should have none, not an empty placeholder (added lazily by the state writer).
+    run_subject(subcommand="add", subject="m1", config_dir=str(tmp_path))
+    data = yaml.safe_load((tmp_path / "subjects" / "m1.yaml").read_text())
+    assert "task_state" not in data
 
 
 def test_subject_rename_moves_file_and_updates_name(tmp_path):
