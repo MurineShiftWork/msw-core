@@ -449,7 +449,8 @@ class SubjectConfig(BaseModel):
         description=(
             "Mapping of task name to a flat dict of settings overrides applied "
             "on top of the task defaults for this animal only. Operator intent "
-            "(human-owned): sticky task_mode, forced params, stage position, ..."
+            "(human-owned): forced params, stage position, ... A task_mode here is rejected: "
+            "modes are chosen per run with --task-mode."
         ),
     )
     task_state: dict[str, dict[str, Any]] = Field(

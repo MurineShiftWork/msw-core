@@ -89,11 +89,20 @@ def _ctx_field(input_kwargs: dict, field: str, key: str, default: str = "") -> s
 
 
 def _strip_unserializable(obj):
-    """Recursively remove callables and other non-YAML-safe objects from dicts/lists."""
+    """Recursively make ``obj`` YAML-safe: drop callables, stringify ``Path``s, recurse
+    through dicts/lists.
+
+    ``Path`` is stringified rather than dropped like a callable: unlike a function object, a
+    path is real, useful data (e.g. task_settings["session_paths"]["basepath"]) that
+    ``yaml.safe_dump`` simply has no representer for - dropping it would silently lose
+    information the same way an overly broad type filter upstream once did.
+    """
     if isinstance(obj, dict):
         return {k: _strip_unserializable(v) for k, v in obj.items() if not callable(v)}
     if isinstance(obj, list):
         return [_strip_unserializable(v) for v in obj if not callable(v)]
+    if isinstance(obj, Path):
+        return str(obj)
     return obj
 
 
@@ -305,8 +314,12 @@ class TaskProcess:
                 "task_schema_version": self.task_version,
             }
         }
-        if _ts.get("scoring_metric"):
-            acq_metadata["task"]["scoring_metric"] = _ts["scoring_metric"]
+        # Flat (legacy tasks) or nested under the task's performance block (sequence task).
+        _scoring_metric = _ts.get("scoring_metric") or (
+            _ts.get("performance") or {}
+        ).get("scoring_metric")
+        if _scoring_metric:
+            acq_metadata["task"]["scoring_metric"] = _scoring_metric
         reward_md = build_reward_metadata(_ts)
         if reward_md:
             acq_metadata["reward"] = reward_md
@@ -393,7 +406,11 @@ class TaskProcess:
 
         if auto_init:
             try:
-                run_pre_hooks(self._pre_hooks, self._hook_ctx)
+                run_pre_hooks(
+                    self._pre_hooks,
+                    self._hook_ctx,
+                    provenance=self.input_kwargs.get("settings.task.provenance"),
+                )
             except SessionAbortError:
                 self.exit_safely()
                 raise

@@ -188,7 +188,8 @@ def _add_task_mode_args(parser):
         type=str,
         default="",
         help=(
-            "Named preset from task.yaml 'mode:' section. "
+            "Named preset from task.yaml 'mode:' section, applied to this run only "
+            "(not remembered for the subject). "
             "Overrides task defaults; overridden by subject YAML and -ts. "
             "Example: --task-mode probe"
         ),
@@ -202,7 +203,8 @@ def _add_task_mode_args(parser):
         default=[],
         help=(
             "Task-settings key-value overrides (highest priority). "
-            "Example: -ts reward_amount_ul=3 n_max_trials=200"
+            "Dotted keys set nested settings. "
+            "Example: -ts reward_amount_ul=3 stop.max_trials.value=200"
         ),
     )
 

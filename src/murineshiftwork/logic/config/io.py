@@ -126,16 +126,11 @@ def _load_or_seed_subject(
             raw = yaml.safe_load(f) or {}
         raw = _migrate_subject_config(raw)
     else:
-        raw = {
-            "schema_version": SUBJECT_CONFIG_SCHEMA_VERSION,
-            "name": subject_name,
-            "registered": "",
-            "project": "",
-            "experiment": "",
-            "comment": "",
-            "aliases": [],
-            "task_overrides": {},
-        }
+        # Same skeleton `msw subject add` writes (SubjectConfig's own defaults): keeps the two
+        # "what does a brand-new subject look like" call sites from drifting apart again.
+        # task_state is excluded: it's machine-written progress, added lazily by the state
+        # writer via setdefault, not part of a fresh subject's skeleton.
+        raw = SubjectConfig(name=subject_name).model_dump(mode="json", exclude={"task_state"})
 
     raw["schema_version"] = SUBJECT_CONFIG_SCHEMA_VERSION
     return path, raw
@@ -153,8 +148,6 @@ def save_subject_task_overrides(
     Merges into existing task_overrides without overwriting other keys.
     Typical callers:
       - stage writeback: overrides={"stage_position": "mouse_t001"}
-      - sequence level writeback: overrides={"start_level": 7}
-      - mode writeback: overrides={"task_mode": "stage10deterministic"}
     """
     path, raw = _load_or_seed_subject(config_dir, subject_name)
     raw.setdefault("task_overrides", {}).setdefault(task_name, {}).update(overrides)

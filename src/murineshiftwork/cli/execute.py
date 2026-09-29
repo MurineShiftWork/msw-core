@@ -426,16 +426,18 @@ def run_subject(**args_dict):
             print_box(f"Subject '{subject_name}' already exists at {path}.")
             return
 
-        data = {
-            "name": subject_name,
-            "registered": datetime.datetime.now().isoformat(timespec="seconds"),
-            "project": args_dict.get("project", ""),
-            "experiment": args_dict.get("experiment", ""),
-            "comment": args_dict.get("comment", ""),
-            "aliases": [],
-            "task_overrides": {},
-        }
-        _write_yaml(path, data)
+        from murineshiftwork.logic.config.models import SubjectConfig
+
+        cfg = SubjectConfig(
+            name=subject_name,
+            registered=datetime.datetime.now().isoformat(timespec="seconds"),
+            project=args_dict.get("project", ""),
+            experiment=args_dict.get("experiment", ""),
+            comment=args_dict.get("comment", ""),
+        )
+        # task_state is machine-written progress, added lazily once a task actually runs;
+        # a freshly registered subject shouldn't carry an empty placeholder for it.
+        _write_yaml(path, cfg.model_dump(mode="json", exclude={"task_state"}))
         print_box(f"Registered subject '{subject_name}' at {path}")
 
     elif subcommand == "list":
