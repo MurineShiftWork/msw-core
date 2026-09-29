@@ -435,7 +435,9 @@ def run_subject(**args_dict):
             experiment=args_dict.get("experiment", ""),
             comment=args_dict.get("comment", ""),
         )
-        _write_yaml(path, cfg.model_dump(mode="json"))
+        # task_state is machine-written progress, added lazily once a task actually runs;
+        # a freshly registered subject shouldn't carry an empty placeholder for it.
+        _write_yaml(path, cfg.model_dump(mode="json", exclude={"task_state"}))
         print_box(f"Registered subject '{subject_name}' at {path}")
 
     elif subcommand == "list":

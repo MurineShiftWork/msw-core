@@ -128,7 +128,9 @@ def _load_or_seed_subject(
     else:
         # Same skeleton `msw subject add` writes (SubjectConfig's own defaults): keeps the two
         # "what does a brand-new subject look like" call sites from drifting apart again.
-        raw = SubjectConfig(name=subject_name).model_dump(mode="json")
+        # task_state is excluded: it's machine-written progress, added lazily by the state
+        # writer via setdefault, not part of a fresh subject's skeleton.
+        raw = SubjectConfig(name=subject_name).model_dump(mode="json", exclude={"task_state"})
 
     raw["schema_version"] = SUBJECT_CONFIG_SCHEMA_VERSION
     return path, raw
