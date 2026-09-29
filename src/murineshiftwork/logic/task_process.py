@@ -305,8 +305,12 @@ class TaskProcess:
                 "task_schema_version": self.task_version,
             }
         }
-        if _ts.get("scoring_metric"):
-            acq_metadata["task"]["scoring_metric"] = _ts["scoring_metric"]
+        # Flat (legacy tasks) or nested under the task's performance block (sequence task).
+        _scoring_metric = _ts.get("scoring_metric") or (
+            _ts.get("performance") or {}
+        ).get("scoring_metric")
+        if _scoring_metric:
+            acq_metadata["task"]["scoring_metric"] = _scoring_metric
         reward_md = build_reward_metadata(_ts)
         if reward_md:
             acq_metadata["reward"] = reward_md
@@ -393,7 +397,11 @@ class TaskProcess:
 
         if auto_init:
             try:
-                run_pre_hooks(self._pre_hooks, self._hook_ctx)
+                run_pre_hooks(
+                    self._pre_hooks,
+                    self._hook_ctx,
+                    provenance=self.input_kwargs.get("settings.task.provenance"),
+                )
             except SessionAbortError:
                 self.exit_safely()
                 raise

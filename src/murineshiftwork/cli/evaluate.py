@@ -24,14 +24,16 @@ from murineshiftwork.logic.config import (
     load_subject_config,
     read_config,
     read_task_modes,
-    save_subject_task_overrides,
     validate_config_file_path,
 )
 from murineshiftwork.logic.log import setup_logging
 from murineshiftwork.logic.machine_config import resolve_config_dir, resolve_data_dir
 from murineshiftwork.logic.paths import get_host_ip, get_host_name
 from murineshiftwork.logic.run_context import RunContext
-from murineshiftwork.logic.task_settings import build_task_settings
+from murineshiftwork.logic.task_settings import (
+    merge_task_modes,
+    resolve_task_settings,
+)
 
 # Re-export for anything that imported these from here before the split
 __all__ = [
@@ -219,6 +221,29 @@ def _stage_device_to_controller_config(device) -> dict:
         },
         "known_positions": device.known_positions,
     }
+
+
+def _task_default_layers(args_dict: dict) -> list[tuple[str, dict]]:
+    """The task-default layers (bundled task.yaml, then config_dir overlay), labelled by file."""
+    layers: list[tuple[str, dict]] = []
+    for key, prefix in (
+        ("config_file_task", "task.yaml"),
+        ("config_file_task_overlay", "overlay"),
+    ):
+        path = args_dict.get(key, "")
+        if path:
+            layers.append((f"{prefix}:{path}", read_config(file=path)))
+    return layers
+
+
+def _subject_label(args_dict: dict) -> str:
+    """Provenance label for the subject's task_overrides layer (its YAML path)."""
+    subject = args_dict.get("subject", "")
+    if args_dict.get("config_dir") and subject:
+        return (
+            f"subject:{Path(args_dict['config_dir']) / 'subjects' / f'{subject}.yaml'}"
+        )
+    return f"subject:{subject}"
 
 
 def _extra_injections_from_args(args_dict: dict) -> dict:
@@ -528,11 +553,10 @@ def evaluate_args(args_dict=None):
 
     args_dict = _evaluate_and_load_configs(args_dict=args_dict)
 
-    settings_task_default = args_dict["settings.task.default"]
-    task_modes = read_task_modes(args_dict.get("config_file_task", ""))
-    overlay_modes = read_task_modes(args_dict.get("config_file_task_overlay", ""))
-    if overlay_modes:
-        task_modes = {**task_modes, **overlay_modes}  # overlay mode definitions win
+    task_modes = merge_task_modes(
+        read_task_modes(args_dict.get("config_file_task", "")),
+        read_task_modes(args_dict.get("config_file_task_overlay", "")),
+    )
 
     if args_dict["command"] == "run":
         subject = args_dict["subject"]
@@ -551,34 +575,19 @@ def evaluate_args(args_dict=None):
         raise ValueError(f"Unknown command: '{args_dict['command']}'")
 
     task_name = args_dict.get("task", "")
-    patched = build_task_settings(
+    resolved = resolve_task_settings(
         task_name=task_name,
-        settings_task_default=settings_task_default,
+        default_layers=_task_default_layers(args_dict),
         task_modes=task_modes,
         subject_config=args_dict.get("subject_config"),
+        subject_label=_subject_label(args_dict),
         task_mode=args_dict.get("task_mode", ""),
         cli_overrides=args_dict.get("task_settings_overrides", []),
         extra_injections=_extra_injections_from_args(args_dict),
     )
+    patched = resolved.settings
     args_dict["settings.task.patched"] = patched
-
-    # Write task_mode back to subject YAML so next session picks up the same mode
-    # without requiring --task-mode on the CLI again.
-    task_mode = args_dict.get("task_mode", "")
-    subject_config = args_dict.get("subject_config")
-    if task_mode and subject_config and args_dict.get("config_dir") and task_name:
-        try:
-            save_subject_task_overrides(
-                args_dict["config_dir"],
-                args_dict["subject"],
-                task_name,
-                {"task_mode": task_mode},
-            )
-            logging.debug(
-                f"Wrote task_mode '{task_mode}' to subject YAML for task '{task_name}'"
-            )
-        except Exception as exc:
-            logging.warning(f"Could not write task_mode to subject YAML: {exc}")
+    args_dict["settings.task.provenance"] = resolved.provenance
 
     setup_config = args_dict.get("setup_config")
     _resolve_setup_config_ports(args_dict, setup_config, patched)
