@@ -86,6 +86,30 @@ def test_unknown_mode_raises():
         _resolve(task_mode="nope")
 
 
+def test_task_mode_overrides_subject_config_for_the_same_key():
+    """A mode is shorthand for a settings group applied at the CLI's position: it beats the
+    subject config, the layer beneath it -- unlike a plain CLI -ts key, which never did."""
+    r = _resolve(
+        task_mode="probe",
+        subject_config=_subject({"perturb": {"enabled": False}}),
+        subject_label="subject:M1.yaml",
+    )
+    assert r.settings["perturb"]["enabled"] is True
+    assert r.provenance["perturb.enabled"] == "mode:probe"
+
+
+def test_single_cli_setting_still_overrides_the_task_mode():
+    """A single -ts key is more specific than a mode, so it still wins even though both are
+    CLI-sourced."""
+    r = _resolve(
+        task_mode="probe",
+        subject_config=_subject({"perturb": {"enabled": False}}),
+        cli_overrides=["perturb.enabled=False"],
+    )
+    assert r.settings["perturb"]["enabled"] is False
+    assert r.provenance["perturb.enabled"] == LAYER_CLI
+
+
 def test_overlay_modes_deep_merge_per_mode():
     merged = merge_task_modes(
         {"a": {"x": {"p": 1, "q": 2}}, "b": {"y": 1}},

@@ -3,8 +3,10 @@
 Priority chain (lowest → highest):
   1. bundled task.yaml default:
   2. config_dir overlay task.yaml default:
-  3. CLI --task-mode (named preset from the task.yaml mode: section)
-  4. subject YAML task_overrides
+  3. subject YAML task_overrides
+  4. CLI --task-mode (named preset from the task.yaml mode: section) -- a mode is shorthand
+     for a group of settings, applied at the CLI's position in the chain: it overrides the
+     subject config, but a single -ts key below still overrides the mode
   5. CLI -ts KEY=VALUE overrides (dotted keys reach nested settings: -ts a.b.c=1)
   6. extra injections (only for keys not already present)
 
@@ -171,6 +173,11 @@ def resolve_task_settings(
             f"`python -m murineshiftwork.tasks.sequence.migrate <config_dir>` does this for you)."
         )
 
+    if subject_patch:
+        patched = deep_merge(patched, subject_patch)
+        _record(provenance, subject_patch, subject_label)
+        logging.debug(f"Subject YAML task_overrides for '{task_name}': {subject_patch}")
+
     if task_mode:
         if task_mode not in task_modes:
             raise ValueError(
@@ -181,11 +188,6 @@ def resolve_task_settings(
         patched = deep_merge(patched, mode_overrides)
         _record(provenance, mode_overrides, f"mode:{task_mode}")
         logging.debug(f"Task mode '{task_mode}' applied: {mode_overrides}")
-
-    if subject_patch:
-        patched = deep_merge(patched, subject_patch)
-        _record(provenance, subject_patch, subject_label)
-        logging.debug(f"Subject YAML task_overrides for '{task_name}': {subject_patch}")
 
     resolved_overrides = parse_key_value_list(cli_overrides or [])
     for key, value in resolved_overrides.items():
