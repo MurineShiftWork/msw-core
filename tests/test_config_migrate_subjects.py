@@ -44,7 +44,7 @@ def test_migrate_seeds_sequence_level_from_start_level(tmp_path):
     assert _migrate_one_subject(p, dry_run=False, ts="T") == 1
     out = yaml.safe_load(p.read_text())
     assert out["schema_version"] == 2
-    assert out["task_state"]["sequence"]["sequences"]["default"] == {
+    assert out["task_state"]["sequence"]["curriculum"]["levels"]["default"] == {
         "level": 12,
         "updated": "T",
     }
@@ -87,11 +87,26 @@ def test_migrate_idempotent_and_skips_newer(tmp_path, capsys):
             "name": "seq003",
             "task_overrides": {"sequence": {"start_level": 7}},
             "task_state": {
-                "sequence": {"sequences": {"default": {"level": 7, "updated": "x"}}}
+                "sequence": {
+                    "curriculum": {"levels": {"default": {"level": 7, "updated": "x"}}}
+                }
             },
         },
     )
     assert _migrate_one_subject(p, dry_run=False, ts="T") == 0
+
+    # a level saved in the pre-curriculum layout is not re-seeded (left for the task's migration)
+    po = _write(
+        tmp_path,
+        "seq004",
+        {
+            "schema_version": 2,
+            "name": "seq004",
+            "task_overrides": {"sequence": {"start_level": 7}},
+            "task_state": {"sequence": {"sequences": {"default": {"level": 9}}}},
+        },
+    )
+    assert _migrate_one_subject(po, dry_run=False, ts="T") == 0
 
     # newer-than-supported schema: skipped, file untouched
     pf = _write(tmp_path, "future", {"schema_version": 99, "name": "future"})
@@ -117,6 +132,6 @@ def test_run_command_migrates_all(tmp_path, capsys):
     assert (
         yaml.safe_load((tmp_path / "subjects" / "a.yaml").read_text())["task_state"][
             "sequence"
-        ]["sequences"]["default"]["level"]
+        ]["curriculum"]["levels"]["default"]["level"]
         == 3
     )
