@@ -126,16 +126,9 @@ def _load_or_seed_subject(
             raw = yaml.safe_load(f) or {}
         raw = _migrate_subject_config(raw)
     else:
-        raw = {
-            "schema_version": SUBJECT_CONFIG_SCHEMA_VERSION,
-            "name": subject_name,
-            "registered": "",
-            "project": "",
-            "experiment": "",
-            "comment": "",
-            "aliases": [],
-            "task_overrides": {},
-        }
+        # Same skeleton `msw subject add` writes (SubjectConfig's own defaults): keeps the two
+        # "what does a brand-new subject look like" call sites from drifting apart again.
+        raw = SubjectConfig(name=subject_name).model_dump(mode="json")
 
     raw["schema_version"] = SUBJECT_CONFIG_SCHEMA_VERSION
     return path, raw
