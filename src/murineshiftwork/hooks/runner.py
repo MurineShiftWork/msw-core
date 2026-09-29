@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import copy
 import importlib
 import logging
 from typing import Any
 
 from murineshiftwork.hooks.base import SessionAbortError, TaskHook
 from murineshiftwork.hooks.context import HookContext
+from murineshiftwork.logic.task_settings import attribute_changes
 
 
 def load_hooks(dotted_paths: list[str]) -> list[TaskHook]:
@@ -55,11 +57,22 @@ def collect_hooks(
     return load_hooks(pre_paths), load_hooks(post_paths)
 
 
-def run_pre_hooks(hooks: list[TaskHook], ctx: HookContext) -> None:
+def _snapshot(settings: dict) -> dict | None:
+    try:
+        return copy.deepcopy(settings)
+    except Exception:  # unpicklable injected objects: skip attribution, never the hook
+        return None
+
+
+def run_pre_hooks(
+    hooks: list[TaskHook], ctx: HookContext, provenance: dict | None = None
+) -> None:
     """Run pre-session hooks in order.
 
     Non-fatal failures log WARNING and are skipped.
     Fatal failures raise SessionAbortError (caller must clean up hardware).
+    When ``provenance`` (the task-settings provenance map) is given, every setting a hook
+    changes is attributed to ``hook:<HookClass>``.
     """
     if not hooks:
         return
@@ -67,9 +80,16 @@ def run_pre_hooks(hooks: list[TaskHook], ctx: HookContext) -> None:
     for hook in hooks:
         name = type(hook).__name__
         logging.info("Pre-hook: %s", name)
+        before = _snapshot(ctx.task_settings) if provenance is not None else None
         try:
             hook.pre_run(ctx)
             logging.info("Pre-hook done: %s", name)
+            if before is not None:
+                changed = attribute_changes(
+                    provenance, before, ctx.task_settings, f"hook:{name}"
+                )
+                if changed:
+                    logging.info("Pre-hook %s changed task settings: %s", name, changed)
         except SessionAbortError:
             raise
         except Exception as exc:

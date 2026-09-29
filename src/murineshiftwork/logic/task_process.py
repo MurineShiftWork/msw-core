@@ -402,7 +402,11 @@ class TaskProcess:
 
         if auto_init:
             try:
-                run_pre_hooks(self._pre_hooks, self._hook_ctx)
+                run_pre_hooks(
+                    self._pre_hooks,
+                    self._hook_ctx,
+                    provenance=self.input_kwargs.get("settings.task.provenance"),
+                )
             except SessionAbortError:
                 self.exit_safely()
                 raise
