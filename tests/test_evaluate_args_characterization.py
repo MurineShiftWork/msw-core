@@ -61,6 +61,7 @@ _EXPECTED_KEYS = {
     "settings.stage",
     "settings.task.default",
     "settings.task.patched",
+    "settings.task.provenance",
     "setup",
     "setup_config",
     "simulate",

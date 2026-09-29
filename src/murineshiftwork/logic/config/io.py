@@ -146,8 +146,6 @@ def save_subject_task_overrides(
     Merges into existing task_overrides without overwriting other keys.
     Typical callers:
       - stage writeback: overrides={"stage_position": "mouse_t001"}
-      - sequence level writeback: overrides={"start_level": 7}
-      - mode writeback: overrides={"task_mode": "stage10deterministic"}
     """
     path, raw = _load_or_seed_subject(config_dir, subject_name)
     raw.setdefault("task_overrides", {}).setdefault(task_name, {}).update(overrides)
