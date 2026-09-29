@@ -158,7 +158,7 @@ def _migrate_one_subject(path: Path, dry_run: bool, ts: str) -> int:
 
     Upgrades the schema (v1 -> v2 adds the ``task_state`` container) and seeds the sequence
     task's earned level: ``task_overrides.sequence.start_level`` ->
-    ``task_state.sequence.sequences.default.level`` (start_level is the most-recent earned level
+    ``task_state.sequence.curriculum.levels.default.level`` (start_level is the most-recent earned level
     from the retired writeback; the machine-local level JSON is intentionally NOT read here). A
     timestamped ``.bak`` is written before any change.
     """
@@ -181,17 +181,21 @@ def _migrate_one_subject(path: Path, dry_run: bool, ts: str) -> int:
     start_level = ((migrated.get("task_overrides") or {}).get("sequence") or {}).get(
         "start_level"
     )
-    seqs = (
-        migrated.setdefault("task_state", {})
-        .setdefault("sequence", {})
-        .setdefault("sequences", {})
-    )
+    seq_state = migrated.setdefault("task_state", {}).setdefault("sequence", {})
+    # A level already saved (in the current or the pre-curriculum layout) is never overwritten;
+    # the sequence task's own migration moves the old layout.
+    already = "default" in (
+        (seq_state.get("curriculum") or {}).get("levels") or {}
+    ) or ("default" in (seq_state.get("sequences") or {}))
     seeded = False
-    if start_level is not None and "default" not in seqs:
-        seqs["default"] = {"level": int(start_level), "updated": ts}
+    if start_level is not None and not already:
+        seq_state.setdefault("curriculum", {}).setdefault("levels", {})["default"] = {
+            "level": int(start_level),
+            "updated": ts,
+        }
         seeded = True
-    if not seqs:  # nothing seeded -> drop the empty scaffold we just created
-        migrated.get("task_state", {}).pop("sequence", None)
+    if not seq_state:  # nothing seeded -> drop the empty scaffold we just created
+        migrated["task_state"].pop("sequence")
 
     if migrated == raw:
         return 0
