@@ -10,7 +10,7 @@ env:
 jobs:
   review:
     name: Review
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Placeholder
         run: echo "PR review placeholder"
