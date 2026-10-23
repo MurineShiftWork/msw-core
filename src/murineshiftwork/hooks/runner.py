@@ -84,12 +84,6 @@ def run_pre_hooks(
         try:
             hook.pre_run(ctx)
             logging.info("Pre-hook done: %s", name)
-            if before is not None:
-                changed = attribute_changes(
-                    provenance, before, ctx.task_settings, f"hook:{name}"
-                )
-                if changed:
-                    logging.info("Pre-hook %s changed task settings: %s", name, changed)
         except SessionAbortError:
             raise
         except Exception as exc:
@@ -101,6 +95,24 @@ def run_pre_hooks(
                 f"Pre-hook {name} raised (skipped): {exc}",
                 exc_info=True,
             )
+        if before is not None and provenance is not None:
+            _attribute_hook_changes(provenance, before, ctx.task_settings, name)
+
+
+def _attribute_hook_changes(
+    provenance: dict, before: dict, after: dict, name: str
+) -> None:
+    """Attribute settings a hook changed to ``hook:<name>``; bookkeeping only, so an
+    error here is logged and never reported as a hook failure."""
+    try:
+        changed = attribute_changes(provenance, before, after, f"hook:{name}")
+    except Exception:
+        logging.warning(
+            "Could not attribute settings changed by pre-hook %s", name, exc_info=True
+        )
+        return
+    if changed:
+        logging.info("Pre-hook %s changed task settings: %s", name, changed)
 
 
 def run_post_hooks(hooks: list[TaskHook], ctx: HookContext) -> None:
