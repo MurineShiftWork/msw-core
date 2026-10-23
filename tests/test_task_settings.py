@@ -140,3 +140,50 @@ def test_pre_hook_changes_are_attributed():
     run_pre_hooks([Fetch()], ctx, provenance=r.provenance)
     assert r.settings["stop"]["max_trials"]["value"] == 42
     assert r.provenance["stop.max_trials.value"] == "hook:Fetch"
+
+
+def test_attribution_error_is_not_a_hook_failure(monkeypatch, caplog):
+    from murineshiftwork.hooks import runner
+
+    class Fatal:
+        fatal = True
+
+        def pre_run(self, ctx):
+            ctx.task_settings["iti"] = 1.0
+
+    def boom(*_a, **_kw):
+        raise RuntimeError("bookkeeping")
+
+    monkeypatch.setattr(runner, "attribute_changes", boom)
+    r = _resolve()
+    ctx = SimpleNamespace(task_settings=r.settings)
+    runner.run_pre_hooks(
+        [Fatal()], ctx, provenance=r.provenance
+    )  # no SessionAbortError
+    assert r.settings["iti"] == 1.0
+    assert "Could not attribute" in caplog.text
+
+
+def test_subject_overrides_beat_task_mode():
+    """A mode is a preset below the subject config: per-animal values (e.g. a
+    pswitching subject's own probabilities) survive --task-mode; -ts still wins."""
+    modes = {"stage10": {"reward_amount_ul": 3.0, "probabilities": [[90, 10]]}}
+    r = resolve_task_settings(
+        task_name="seq",
+        default_layers=[("task.yaml", {"reward_amount_ul": 2.0, "iti": 0.4})],
+        task_modes=modes,
+        subject_config=_subject({"reward_amount_ul": 2.5, "probabilities": [[70, 30]]}),
+        subject_label="subject:P1.yaml",
+        task_mode="stage10",
+        cli_overrides=["iti=0.5"],
+    )
+    assert r.settings == {
+        "reward_amount_ul": 2.5,
+        "probabilities": [[70, 30]],
+        "iti": 0.5,
+    }
+    assert r.provenance == {
+        "reward_amount_ul": "subject:P1.yaml",
+        "probabilities": "subject:P1.yaml",
+        "iti": LAYER_CLI,
+    }

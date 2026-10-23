@@ -106,6 +106,14 @@ def _strip_unserializable(obj):
     return obj
 
 
+def _scoring_metric_of(task_settings: dict) -> str | None:
+    """Flat ``scoring_metric`` (legacy tasks), else ``performance.scoring_metric``
+    (the rebuilt sequence task)."""
+    return task_settings.get("scoring_metric") or (
+        task_settings.get("performance") or {}
+    ).get("scoring_metric")
+
+
 def update_session_yaml(session_file_path, **sections):
     """Add or update top-level sections in .msw.session.yaml.
 
@@ -314,10 +322,7 @@ class TaskProcess:
                 "task_schema_version": self.task_version,
             }
         }
-        # Flat (legacy tasks) or nested under the task's performance block (sequence task).
-        _scoring_metric = _ts.get("scoring_metric") or (
-            _ts.get("performance") or {}
-        ).get("scoring_metric")
+        _scoring_metric = _scoring_metric_of(_ts)
         if _scoring_metric:
             acq_metadata["task"]["scoring_metric"] = _scoring_metric
         reward_md = build_reward_metadata(_ts)
