@@ -2,9 +2,11 @@
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 from murineshiftwork.logic.task_process import (
+    _scoring_metric_of,
     _strip_unserializable,
     update_session_yaml,
 )
@@ -35,3 +37,20 @@ def test_session_yaml_keeps_session_paths(tmp_path):
     written = next(tmp_path.glob("*session.yaml"))
     data = yaml.safe_load(written.read_text())
     assert data["task_settings"]["session_paths"]["basepath"] == str(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "ts, expected",
+    [
+        ({"scoring_metric": "hit_rate"}, "hit_rate"),
+        ({"performance": {"scoring_metric": "seq_correct"}}, "seq_correct"),
+        (
+            {"scoring_metric": "flat", "performance": {"scoring_metric": "nested"}},
+            "flat",
+        ),
+        ({"performance": None}, None),
+        ({}, None),
+    ],
+)
+def test_scoring_metric_flat_or_performance_block(ts, expected):
+    assert _scoring_metric_of(ts) == expected
