@@ -4,7 +4,8 @@ type: software
 title: "msw-core"
 repository-code: https://github.com/murineshiftwork/msw-core
 url: https://github.com/murineshiftwork/msw-core
-license: LicenseRef-MSW-NonCommercial
+# BSD-3-Clause-NonCommercial has no SPDX id, so CFF points at the licence file instead.
+license-url: https://github.com/MurineShiftWork/msw-core/blob/main/LICENSE
 authors:
   - family-names: Rollik
     given-names: Lars B.
