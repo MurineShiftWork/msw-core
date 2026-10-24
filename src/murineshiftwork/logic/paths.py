@@ -5,9 +5,11 @@ imported from there directly; this module holds only the host-local helpers.
 """
 
 import contextlib
+import logging
 import os
 import shutil
 import socket
+import time
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -32,6 +34,12 @@ def test_path_is_writable(path=None):
     return True
 
 
+# On Windows a reader holding the target open makes os.replace fail with PermissionError; retry
+# briefly before falling back to an in-place copy.
+_REPLACE_ATTEMPTS = 5
+_REPLACE_RETRY_DELAY_S = 0.05
+
+
 @contextlib.contextmanager
 def atomic_open_w(path, encoding: str | None = None) -> Iterator[IO[str]]:
     """Open ``path`` for a whole-file text rewrite that lands atomically.
@@ -42,7 +50,9 @@ def atomic_open_w(path, encoding: str | None = None) -> Iterator[IO[str]]:
     is left exactly as it was, so a crash mid-write can never leave a truncated file behind.
 
     The temporary file is created with ``open(..., "x")`` so it gets the normal umask-derived
-    permissions, and an existing target's mode is copied onto it before the swap.
+    permissions, and an existing target's mode is copied onto it before the swap. If the swap
+    keeps failing with ``PermissionError`` (Windows, target held open by a reader) the content
+    is copied over the target in place instead, with a warning, so the write is never dropped.
     """
     target = Path(path)
     tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex[:8]}.tmp")
@@ -54,11 +64,20 @@ def atomic_open_w(path, encoding: str | None = None) -> Iterator[IO[str]]:
         if target.exists():
             with contextlib.suppress(OSError):
                 shutil.copymode(target, tmp)
-        tmp.replace(target)  # os.replace: atomic swap
-    except BaseException:
+        for attempt in range(_REPLACE_ATTEMPTS):
+            try:
+                tmp.replace(target)  # os.replace: atomic swap
+                return
+            except PermissionError:
+                if attempt + 1 < _REPLACE_ATTEMPTS:
+                    time.sleep(_REPLACE_RETRY_DELAY_S)
+        logging.warning(
+            "Could not atomically replace %s (held open?); rewriting in place", target
+        )
+        shutil.copyfile(tmp, target)
+    finally:
         with contextlib.suppress(OSError):
-            tmp.unlink()
-        raise
+            tmp.unlink(missing_ok=True)
 
 
 def get_host_ip():

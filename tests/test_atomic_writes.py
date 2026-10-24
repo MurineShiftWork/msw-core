@@ -101,3 +101,21 @@ def test_subject_writeback_failure_keeps_previous_file(tmp_path, monkeypatch):
 
     assert subject_yaml.read_text() == before
     assert _leftovers(subject_yaml.parent) == []
+
+
+def test_atomic_open_w_blocked_replace_falls_back_to_in_place(tmp_path, monkeypatch):
+    # Windows: a reader holding the file open makes os.replace raise PermissionError.
+    import murineshiftwork.logic.paths as paths_mod
+
+    target = tmp_path / "f.yaml"
+    target.write_text("x: 1\n")
+
+    def _blocked(self, _target):
+        raise PermissionError("in use")
+
+    monkeypatch.setattr(paths_mod.Path, "replace", _blocked)
+    monkeypatch.setattr(paths_mod, "_REPLACE_RETRY_DELAY_S", 0)
+    with atomic_open_w(target) as f:
+        f.write("x: 2\n")
+    assert target.read_text() == "x: 2\n"
+    assert _leftovers(tmp_path) == []
