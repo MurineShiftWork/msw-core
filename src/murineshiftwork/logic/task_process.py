@@ -146,7 +146,8 @@ class TaskRunner(Thread):
     """
 
     bpod: Any = None
-    input_kwargs: dict = {}
+    # Per-instance (set in __init__): a class-level dict would be shared by every runner.
+    input_kwargs: dict[str, Any]
     continue_task = True
 
     def __init__(self, bpod=None, **kwargs):
@@ -218,7 +219,8 @@ class TaskProcess:
     task_in = None
     task_name = None
     subject = None
-    input_kwargs: dict = {}
+    # Mutable state is per-instance (set in __init__); class-level containers would be shared.
+    input_kwargs: dict[str, Any]
     # Run task
     session_paths: Any = None
     bpod: Any = None
@@ -226,8 +228,8 @@ class TaskProcess:
     serial_is_open = False
     task_runner = None
     # Hooks
-    _pre_hooks: list = []
-    _post_hooks: list = []
+    _pre_hooks: list
+    _post_hooks: list
     _hook_ctx: Any = None
     # LogAgent relay
     _relay_queue: Any = None
@@ -257,6 +259,8 @@ class TaskProcess:
         **kwargs,
     ):
         super().__init__()
+        self._pre_hooks = []
+        self._post_hooks = []
         self.serial_port = str(serial_port_bpod) if serial_port_bpod else ""
         self.out_path = str(out_path)
         self.subject = str(subject)
