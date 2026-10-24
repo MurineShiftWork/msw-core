@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import queue
 
 import pytest
 
+import murineshiftwork.logic.task_process as tp_mod
 from murineshiftwork.logic.task_process import TaskProcess, TaskRunner
 
 
@@ -73,6 +75,27 @@ def test_emit_trial_relay_failure_is_swallowed():
     runner = TaskRunner(trial_writer=_FakeWriter(), relay_queue=_FullQueue())
     # A dead/full monitor must never interrupt the task.
     runner.emit_trial({"trial_index": 0}, relay={"trial_index": 0})
+    assert runner.relay_drops == 1
+
+
+def test_emit_trial_relay_drops_are_logged_rate_limited(caplog):
+    class _FullQueue:
+        def put_nowait(self, _item):
+            raise queue.Full
+
+    writer = _FakeWriter()
+    runner = TaskRunner(trial_writer=writer, relay_queue=_FullQueue())
+    n = 2 * tp_mod.RELAY_DROP_LOG_EVERY + 5
+    with caplog.at_level(logging.WARNING):
+        for i in range(n):
+            runner.emit_trial({"trial_index": i}, relay={"trial_index": i})
+    assert len(writer.trials) == n  # the durable write is unaffected by the relay
+    assert runner.relay_drops == n
+    warnings = [r for r in caplog.records if "Monitor relay" in r.getMessage()]
+    # first drop, then once every RELAY_DROP_LOG_EVERY drops
+    assert len(warnings) == 3
+    assert "dropped 1 " in warnings[0].getMessage()
+    assert f"dropped {2 * tp_mod.RELAY_DROP_LOG_EVERY} " in warnings[-1].getMessage()
 
 
 def test_exit_safely_runs_even_if_finalize_raises(monkeypatch):
@@ -92,8 +115,6 @@ def test_exit_safely_runs_even_if_finalize_raises(monkeypatch):
         "session_folder": "/nonexistent/s/acq",
         "session_basename": "acq",
     }
-
-    import murineshiftwork.logic.task_process as tp_mod
 
     def _boom(*_a, **_k):
         raise RuntimeError("finalize failed")
