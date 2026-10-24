@@ -258,3 +258,99 @@ def test_bpod_device_defaults_workspace_to_none_when_unset(monkeypatch):
     BpodDevice("/dev/ttyACM0").connect()  # no set_workspace call
     assert captured["workspace_path"] is None
     assert captured["session_name"] is None
+
+
+# --------------------------------------------------------------------------- #
+# BpodDevice lifecycle over a fake BpodFactory
+
+
+class _RecordingFactory:
+    """Stands in for BpodFactory: records constructor kwargs and lifecycle calls."""
+
+    instances: list[_RecordingFactory] = []
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.calls: list[str] = []
+        _RecordingFactory.instances.append(self)
+
+    def open(self):
+        self.calls.append("open")
+
+    def close_safely(self):
+        self.calls.append("close_safely")
+
+
+@pytest.fixture
+def fake_bpod_factory(monkeypatch):
+    _RecordingFactory.instances = []
+    monkeypatch.setattr(
+        "murineshiftwork.hardware.bpod.device.BpodFactory", _RecordingFactory
+    )
+    return _RecordingFactory
+
+
+def test_bpod_connect_opens_factory_and_disconnect_closes_it(fake_bpod_factory):
+    from murineshiftwork.hardware.bpod.device import BpodDevice
+
+    dev = BpodDevice("/dev/ttyACM0")
+    dev.connect()
+    (factory,) = fake_bpod_factory.instances
+    assert factory.calls == ["open"]
+    assert dev.handle is factory
+    dev.disconnect()
+    assert factory.calls == ["open", "close_safely"]
+
+
+def test_bpod_forwards_factory_kwargs(fake_bpod_factory):
+    from murineshiftwork.hardware.bpod.device import BpodDevice
+
+    BpodDevice("/dev/ttyACM0", connect_retries=5, retry_delay_s=0.1).connect()
+    (factory,) = fake_bpod_factory.instances
+    assert factory.kwargs == {
+        "serial_port": "/dev/ttyACM0",
+        "workspace_path": None,
+        "session_name": None,
+        "connect_retries": 5,
+        "retry_delay_s": 0.1,
+    }
+
+
+def test_bpod_handle_before_connect_raises():
+    from murineshiftwork.hardware.bpod.device import BpodDevice
+
+    with pytest.raises(RuntimeError, match="not connected"):
+        _ = BpodDevice("/dev/ttyACM0").handle
+
+
+def test_bpod_disconnect_before_connect_is_safe(fake_bpod_factory):
+    from murineshiftwork.hardware.bpod.device import BpodDevice
+
+    BpodDevice("/dev/ttyACM0").disconnect()  # must not raise
+    assert fake_bpod_factory.instances == []
+
+
+def test_bpod_preflight_checks_the_serial_port(monkeypatch):
+    from murineshiftwork.hardware.bpod.device import BpodDevice
+
+    monkeypatch.setattr(
+        "murineshiftwork.hardware.manager.serial_port_present",
+        lambda p: p == "/dev/ttyACM0",
+    )
+    BpodDevice("/dev/ttyACM0").preflight()  # present: no raise
+    with pytest.raises(ValueError, match="bpod serial port not accessible"):
+        BpodDevice("/dev/ttyACM9").preflight()
+
+
+def test_bpod_simulate_skips_preflight_and_opens_sim(monkeypatch):
+    from murineshiftwork.hardware.bpod.device import BpodDevice
+    from murineshiftwork.hardware.bpod.sim import SimBpod
+
+    monkeypatch.setattr(
+        "murineshiftwork.hardware.manager.serial_port_present", lambda p: False
+    )
+    dev = BpodDevice("", simulate=True)
+    dev.preflight()  # no port needed in simulation
+    dev.connect()
+    assert isinstance(dev.handle, SimBpod)
+    dev.disconnect()
