@@ -12,6 +12,7 @@ from murineshiftwork.logic.config.models import (
     SubjectConfig,
     ValveCalibration,
 )
+from murineshiftwork.logic.paths import atomic_open_w
 
 _YAML_DUMP_KWARGS: dict = {
     "default_flow_style": False,
@@ -96,7 +97,7 @@ def update_valve_calibration(
         valve_entry
     )
 
-    with path.open("w") as f:
+    with atomic_open_w(path) as f:
         yaml.dump(raw, f, **_YAML_DUMP_KWARGS)
 
     logging.info(
@@ -154,7 +155,7 @@ def save_subject_task_overrides(
     path, raw = _load_or_seed_subject(config_dir, subject_name)
     raw.setdefault("task_overrides", {}).setdefault(task_name, {}).update(overrides)
 
-    with path.open("w") as f:
+    with atomic_open_w(path) as f:
         yaml.dump(raw, f, **_YAML_DUMP_KWARGS)
 
     logging.info(
@@ -194,7 +195,7 @@ def save_subject_task_state(
     task_states = raw.setdefault("task_state", {})
     task_states[task_name] = deep_merge(task_states.get(task_name) or {}, state)
 
-    with path.open("w") as f:
+    with atomic_open_w(path) as f:
         yaml.dump(raw, f, **_YAML_DUMP_KWARGS)
 
     logging.info(
@@ -237,7 +238,7 @@ def update_stage_config(
     if known_positions:
         stage["known_positions"] = known_positions
 
-    with path.open("w") as f:
+    with atomic_open_w(path) as f:
         yaml.dump(raw, f, **_YAML_DUMP_KWARGS)
 
     logging.info(f"Updated stage config in setup '{setup_name}' at {path}")

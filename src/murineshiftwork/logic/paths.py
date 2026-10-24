@@ -4,10 +4,17 @@ Namespace path construction lives in ``murineshiftwork.namespace`` and should be
 imported from there directly; this module holds only the host-local helpers.
 """
 
+import contextlib
+import os
+import shutil
 import socket
+import uuid
+from collections.abc import Iterator
 from pathlib import Path
+from typing import IO
 
 __all__ = [
+    "atomic_open_w",
     "test_path_is_writable",
     "get_host_ip",
     "get_host_name",
@@ -23,6 +30,35 @@ def test_path_is_writable(path=None):
     except PermissionError:
         return False
     return True
+
+
+@contextlib.contextmanager
+def atomic_open_w(path, encoding: str | None = None) -> Iterator[IO[str]]:
+    """Open ``path`` for a whole-file text rewrite that lands atomically.
+
+    Yields a handle on a temporary sibling file; on a clean exit the data is flushed, fsynced
+    and moved over ``path`` with ``os.replace`` (atomic on POSIX and Windows when source and
+    target share a directory). If the body raises, the temporary file is removed and ``path``
+    is left exactly as it was, so a crash mid-write can never leave a truncated file behind.
+
+    The temporary file is created with ``open(..., "x")`` so it gets the normal umask-derived
+    permissions, and an existing target's mode is copied onto it before the swap.
+    """
+    target = Path(path)
+    tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        with tmp.open("x", encoding=encoding) as f:
+            yield f
+            f.flush()
+            os.fsync(f.fileno())
+        if target.exists():
+            with contextlib.suppress(OSError):
+                shutil.copymode(target, tmp)
+        tmp.replace(target)  # os.replace: atomic swap
+    except BaseException:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        raise
 
 
 def get_host_ip():
