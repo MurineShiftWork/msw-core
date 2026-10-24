@@ -62,7 +62,10 @@ source = "vcs"
 fallback-version = "0.1.0"
 
 [tool.hatch.build.hooks.vcs]
-version-file = "src/murineshiftwork/_version.py"
+# murineshiftwork is a namespace shared by several distributions: each writes its own
+# version file, so installing one never overwrites another's. Read versions through
+# importlib.metadata.version("<dist>") rather than importing this module.
+version-file = "src/murineshiftwork/_version_msw_core.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/murineshiftwork"]

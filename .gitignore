@@ -49,6 +49,7 @@ dmypy.json
 
 # Build artifacts (hatch-vcs generated)
 src/*/_version.py
+src/*/_version_*.py
 
 # Jupyter
 .ipynb_checkpoints
