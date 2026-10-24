@@ -86,10 +86,14 @@ class GenericSerialDevice(SerialDevice):
     type: Literal["serial_generic"]
 
 
+# Bench scales (and the hx711 bridge) talk 9600 baud; the hardware layer uses the same default.
+DEFAULT_SCALE_BAUDRATE = 9600
+
+
 class ScaleDevice(SerialDevice):
     type: Literal["scale"]
     scale_type: Literal["hx711", "bench"] = "hx711"
-    baudrate: int = 9600
+    baudrate: int = DEFAULT_SCALE_BAUDRATE
     scale_protocol: int | None = None
 
 
