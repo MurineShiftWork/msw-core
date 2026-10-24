@@ -137,6 +137,11 @@ def update_session_yaml(session_file_path, **sections):
         )
 
 
+# A failing relay is logged on the first drop and then once every N drops, so a down monitor
+# is visible in the session log without flooding it at trial rate.
+RELAY_DROP_LOG_EVERY = 100
+
+
 class TaskRunner(Thread):
     """Base class for task threads.
 
@@ -154,6 +159,7 @@ class TaskRunner(Thread):
         super().__init__(daemon=True)
         self.bpod = bpod
         self.input_kwargs = kwargs
+        self.relay_drops = 0
         self.prepare()
 
     def prepare(self):
@@ -185,7 +191,8 @@ class TaskRunner(Thread):
             on-disk format;
           - if ``relay`` is given (the task's flat monitor event - a different, smaller shape than
             the stored ``trial``), it is dispatched to the LogAgent relay queue best-effort (a down
-            monitor never interrupts the task).
+            monitor never interrupts the task; dropped events are counted in ``relay_drops`` and
+            logged on the first and every ``RELAY_DROP_LOG_EVERY``-th drop).
 
         A task that has not migrated never calls this, and the writer stays empty.
         """
@@ -195,8 +202,26 @@ class TaskRunner(Thread):
         if relay is not None:
             relay_queue = self.input_kwargs.get("relay_queue")
             if relay_queue is not None:
-                with contextlib.suppress(Exception):
+                try:
                     relay_queue.put_nowait(relay)
+                except Exception as exc:
+                    self._note_relay_drop(exc)
+
+    def _note_relay_drop(self, exc: Exception) -> None:
+        """Count a relay event that could not be queued; warn on the first and every Nth drop.
+
+        Never raises: a down or full monitor must not interrupt the task.
+        """
+        drops = getattr(self, "relay_drops", 0) + 1
+        self.relay_drops = drops
+        if drops == 1 or drops % RELAY_DROP_LOG_EVERY == 0:
+            with contextlib.suppress(Exception):
+                logging.warning(
+                    "Monitor relay: dropped %d trial event(s) so far (%s: %s)",
+                    drops,
+                    type(exc).__name__,
+                    exc,
+                )
 
     def get_path(self, artifact: str) -> Path:
         """Return the session file path for *artifact* (e.g. 'df.jsonl', 'log')."""
