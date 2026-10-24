@@ -29,6 +29,8 @@ from murineshiftwork.hooks import (
 from murineshiftwork.logic.host_info import (
     _get_git_commit,
     _get_host_info,
+    _get_package_versions,
+    _get_task_package,
     _resolve_msw_version,
 )
 from murineshiftwork.logic.log import (
@@ -605,6 +607,10 @@ class TaskProcess:
                 "acq_type": self.session_paths.get("acq_type", ""),
                 "acq_version": self.session_paths.get("acq_version"),
                 "task_version": self.task_version,
+                # Exact software provenance: every installed MSW-stack distribution, and
+                # which one provides the task that ran.
+                "package_versions": _get_package_versions(),
+                "task_package": _get_task_package(self.task_name),
                 "session_type": _ctx_field(
                     self.input_kwargs, "session_type", "session_type"
                 )
