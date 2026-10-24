@@ -38,7 +38,7 @@ from murineshiftwork.logic.log import (
 from murineshiftwork.logic.misc import (
     print_box,
 )
-from murineshiftwork.logic.paths import test_path_is_writable
+from murineshiftwork.logic.paths import atomic_open_w, test_path_is_writable
 from murineshiftwork.logic.reward_metadata import build_reward_metadata
 
 
@@ -118,6 +118,8 @@ def update_session_yaml(session_file_path, **sections):
     """Add or update top-level sections in .msw.session.yaml.
 
     Creates the file with msw_format_version: 2 if it does not exist yet.
+    The rewrite is atomic (temp file + ``os.replace``): a crash mid-write leaves the previous
+    file intact rather than a truncated YAML.
     Typical callers: task_objects writing task_settings or stage after init.
     """
     yaml_path = str(msw_file(session_file_path, "session.yaml"))
@@ -127,7 +129,7 @@ def update_session_yaml(session_file_path, **sections):
     else:
         data = {"msw_format_version": 2}
     data.update(_strip_unserializable(sections))
-    with Path(yaml_path).open("w") as f:
+    with atomic_open_w(yaml_path) as f:
         yaml.safe_dump(
             data,
             f,
@@ -622,7 +624,7 @@ class TaskProcess:
         yaml_path = str(
             msw_file(self.session_paths["session_file_path"], "session.yaml")
         )
-        with Path(yaml_path).open("w") as f:
+        with atomic_open_w(yaml_path) as f:
             yaml.dump(
                 data,
                 f,
