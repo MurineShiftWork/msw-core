@@ -26,6 +26,7 @@ from murineshiftwork.logic.config import (
     read_task_modes,
     validate_config_file_path,
 )
+from murineshiftwork.logic.config.models import DEFAULT_SCALE_BAUDRATE
 from murineshiftwork.logic.log import setup_logging
 from murineshiftwork.logic.machine_config import resolve_config_dir, resolve_data_dir
 from murineshiftwork.logic.paths import get_host_ip, get_host_name
@@ -413,7 +414,7 @@ def _resolve_setup_config_ports(args_dict, setup_config, patched):
                 f"using CLI value {args_dict['serial_port_scale']!r}"
             )
         scale_type = getattr(scale_dev, "scale_type", "hx711")
-        scale_baudrate = getattr(scale_dev, "baudrate", 4800)
+        scale_baudrate = getattr(scale_dev, "baudrate", None) or DEFAULT_SCALE_BAUDRATE
         scale_protocol = getattr(scale_dev, "scale_protocol", None)
         args_dict["scale_type"] = scale_type
         args_dict["scale_baudrate"] = scale_baudrate

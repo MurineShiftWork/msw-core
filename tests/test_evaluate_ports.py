@@ -59,3 +59,30 @@ def test_failure_returns_exc_and_leaves_cli_value_untouched():
     assert isinstance(exc, ValueError)
     assert ad["serial_port_bpod"] == "/dev/cli"  # CLI value survives
     assert "serial_port_bpod" not in patched
+
+
+def _resolved_scale(device: dict) -> dict:
+    from murineshiftwork.cli.evaluate import _resolve_setup_config_ports
+    from murineshiftwork.logic.config.models import SetupConfig
+
+    setup = SetupConfig.model_validate(
+        {"name": "t", "devices": {"scale": {"port": "/dev/s", **device}}}
+    )
+    ad: dict = {"serial_port_scale": "", "serial_port_pulsepal": ""}
+    _resolve_setup_config_ports(ad, setup, {})
+    return ad
+
+
+def test_scale_baudrate_defaults_to_9600_from_model():
+    ad = _resolved_scale({"type": "scale", "scale_type": "bench"})
+    assert ad["scale_baudrate"] == 9600
+
+
+def test_scale_baudrate_fallback_is_9600_not_4800():
+    # a "scale" entry declared as a generic serial device carries no baudrate field
+    assert _resolved_scale({"type": "serial_generic"})["scale_baudrate"] == 9600
+
+
+def test_scale_baudrate_explicit_value_is_kept():
+    ad = _resolved_scale({"type": "scale", "baudrate": 4800})
+    assert ad["scale_baudrate"] == 4800
