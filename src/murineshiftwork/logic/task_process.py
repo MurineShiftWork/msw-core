@@ -1,5 +1,7 @@
 import contextlib
 import logging
+import signal
+import threading
 import time
 import uuid
 from datetime import UTC
@@ -114,6 +116,36 @@ def _scoring_metric_of(task_settings: dict) -> str | None:
     return task_settings.get("scoring_metric") or (
         task_settings.get("performance") or {}
     ).get("scoring_metric")
+
+
+#: Extra Ctrl+C presses during a clean shutdown before it is abandoned.
+FORCE_QUIT_PRESSES = 3
+
+
+def _guard_shutdown_from_ctrl_c() -> None:
+    """Make further Ctrl+C presses report progress instead of interrupting the clean shutdown.
+
+    The ``FORCE_QUIT_PRESSES``-th extra press restores the default handler and interrupts, so a
+    shutdown that hangs can still be abandoned. Only the main thread can set signal handlers.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        return
+    presses = 0
+
+    def _on_ctrl_c(signum, frame):
+        nonlocal presses
+        presses += 1
+        left = FORCE_QUIT_PRESSES - presses
+        if left <= 0:
+            signal.signal(signal.SIGINT, signal.default_int_handler)
+            raise KeyboardInterrupt
+        logging.warning(
+            "Still shutting down cleanly (saving data, closing hardware). "
+            "Press Ctrl+C %d more time(s) to force quit and risk losing data.",
+            left,
+        )
+
+    signal.signal(signal.SIGINT, _on_ctrl_c)
 
 
 def update_session_yaml(session_file_path, **sections):
@@ -242,6 +274,8 @@ class TaskProcess:
     ``bpod`` is None (default), TaskProcess opens the connection itself using
     ``serial_port_bpod``.
     """
+
+    _stop_requested = False  # set by the first stop_task(); guards later Ctrl+C presses
 
     # Input
     serial_port = None
@@ -480,6 +514,11 @@ class TaskProcess:
             # acquisition finalise raised: a session must not end with its df unflushed or a device
             # left open.
             self.exit_safely()
+            if (
+                self._stop_requested
+                and threading.current_thread() is threading.main_thread()
+            ):
+                signal.signal(signal.SIGINT, signal.default_int_handler)
         if post_exc is not None:
             raise post_exc
 
@@ -670,6 +709,13 @@ class TaskProcess:
         return self.task_runner.is_alive()
 
     def stop_task(self):
+        if not self._stop_requested:
+            self._stop_requested = True
+            logging.warning(
+                "Session end requested: finishing the current trial, saving data and closing "
+                "hardware. Please wait, do not press Ctrl+C again."
+            )
+            _guard_shutdown_from_ctrl_c()
         if self.task_runner is not None and self.is_running():
             self.task_runner.stop()
             if self.bpod is not None:
