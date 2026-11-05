@@ -32,6 +32,7 @@ import contextlib
 import logging
 import multiprocessing as mp
 import os
+import signal
 import sys
 import time
 
@@ -85,6 +86,8 @@ def _server_main(
     pass ``open_audio=True``; the pure-IPC benchmark passes ``False`` so it needs no sound card, while
     ``--real`` passes both True to measure the get-loop with the live PortAudio callback thread active.
     """
+    # Ctrl+C reaches every process in the console; the parent stops this one.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     _tighten_scheduler()
 
     sound = None
