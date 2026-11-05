@@ -210,20 +210,21 @@ def _add_task_mode_args(parser):
 
 
 def _add_meta_args(parser):
-    g = parser.add_argument_group("Metadata")
-    g.add_argument(
+    parser.add_argument_group("Setup").add_argument(
         "--setup",
         type=str,
         default="",
         help="Setup name (must match a YAML in the setups config directory)",
     )
+    g = parser.add_argument_group("Metadata")
     g.add_argument(
         "-m",
         "--meta",
         metavar="KEY=VALUE",
         nargs="+",
         dest="metadata_list",
-        help="Arbitrary metadata key-value pairs. Example: -m project=myproject cohort=1",
+        help="Free-form metadata, recorded in the acquisition manifest. "
+        "Example: -m phase=presleep cohort=1",
     )
     g.add_argument(
         "--meta-experimenter",
