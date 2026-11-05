@@ -61,9 +61,7 @@ def _evaluate_metadata(args_dict):
     if metadata_list:
         kv_list = [v.strip().strip("'\"") for v in metadata_list if "=" in v]
         metadata_dict.update(dict(s.split("=", 1) for s in kv_list))
-    # Named convenience args override --meta
-    if args_dict.get("setup"):
-        metadata_dict["setup"] = args_dict["setup"]
+    # Named convenience arg overrides --meta
     if args_dict.get("experimenter"):
         metadata_dict["experimenter"] = args_dict["experimenter"]
     args_dict["metadata"] = metadata_dict

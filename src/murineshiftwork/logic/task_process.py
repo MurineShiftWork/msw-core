@@ -116,6 +116,21 @@ def _scoring_metric_of(task_settings: dict) -> str | None:
     ).get("scoring_metric")
 
 
+def _acquisition_metadata(cli_metadata: dict | None, framework: dict) -> dict:
+    """The acquisition manifest's ``metadata`` block: ``-m KEY=VALUE`` keys plus framework blocks.
+
+    CLI keys are free-form. The framework blocks (``task``, ``reward``) are written by MSW and win
+    on a name clash, with a warning, so ``-m task=...`` cannot replace the task identity.
+    """
+    merged = dict(cli_metadata or {})
+    for key in framework.keys() & merged.keys():
+        logging.warning(
+            "metadata key %r is reserved; ignoring -m %s=%s", key, key, merged[key]
+        )
+    merged.update(framework)
+    return merged
+
+
 def update_session_yaml(session_file_path, **sections):
     """Add or update top-level sections in .msw.session.yaml.
 
@@ -364,7 +379,9 @@ class TaskProcess:
         init_acquisition_manifest(
             self.session_paths["session_folder"],
             self.session_paths["session_basename"],
-            metadata=acq_metadata,
+            metadata=_acquisition_metadata(
+                self.input_kwargs.get("metadata"), acq_metadata
+            ),
         )
 
         patch_logging_levels()
@@ -502,9 +519,7 @@ class TaskProcess:
 
         bearer_token = log_cfg["log_bearer_token"]
         self._relay_queue = multiprocessing.Queue(maxsize=500)
-        setup = _ctx_field(self.input_kwargs, "setup_name", "setup") or (
-            self.input_kwargs.get("metadata", {}).get("setup", "")
-        )
+        setup = _ctx_field(self.input_kwargs, "setup_name", "setup")
         session_start_payload = {
             "subject": self.subject,
             "task": self.task_name,
