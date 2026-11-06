@@ -18,6 +18,10 @@ from murineshiftwork.cli.tasks import (
     load_task_module,
     validate_task_yaml,
 )
+from murineshiftwork.hardware.camera.selection import (
+    RECORD_CAMERAS_KEY,
+    resolve_record_cameras,
+)
 from murineshiftwork.logic.config import (
     deep_merge,
     load_setup_config,
@@ -455,6 +459,37 @@ def _resolve_setup_config_ports(args_dict, setup_config, patched):
         _inject_valve_calibration(setup_config, patched)
 
 
+def _resolve_record_cameras(args_dict: dict, patched: dict) -> None:
+    """Narrow the camera config handed to the task to the cameras it records.
+
+    ``record_cameras`` is an ordinary task setting, so any settings layer can set it
+    (the setup's or subject's ``task_overrides``, ``-ts``) and its provenance comes
+    from the resolver. Unset, the task records all cameras and nothing changes. The
+    resolved list is written back to the task settings so the session YAML records
+    it. Raises before any hardware starts when a name is unknown or the list is
+    empty.
+    """
+    value = patched.get(RECORD_CAMERAS_KEY)
+    if value is None:
+        return
+    setup_config = args_dict.get("setup_config")
+    narrowed, recorded = resolve_record_cameras(
+        setup_config.cameras if setup_config else None,
+        value,
+        args_dict.get("config_file_camera", ""),
+    )
+    if narrowed is not None:
+        args_dict["cameras_config"] = narrowed
+    patched[RECORD_CAMERAS_KEY] = recorded
+    source = args_dict.get("settings.task.provenance", {}).get(RECORD_CAMERAS_KEY, "")
+    logging.info(
+        "Recording cameras %s for task %r (from %s)",
+        recorded,
+        args_dict.get("task", ""),
+        source or "unknown",
+    )
+
+
 def _parse_host_flag(value: str) -> tuple[str, str]:
     """Parse ``TYPE`` or ``TYPE:URL`` from --host flag value."""
     parts = value.strip().split(":", 1)
@@ -600,6 +635,7 @@ def evaluate_args(args_dict=None):
 
     setup_config = args_dict.get("setup_config")
     _resolve_setup_config_ports(args_dict, setup_config, patched)
+    _resolve_record_cameras(args_dict, patched)
     _resolve_host_session(args_dict)
     # Typed run context (spine refactor) is the single source for the resolved run: build it
     # from args_dict, then DERIVE the ExecutionConfig bundle from it rather than constructing a
