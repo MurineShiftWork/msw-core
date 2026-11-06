@@ -466,8 +466,8 @@ def _resolve_record_cameras(args_dict: dict, patched: dict) -> None:
     (the setup's or subject's ``task_overrides``, ``-ts``) and its provenance comes
     from the resolver. Unset, the task records all cameras and nothing changes. The
     resolved list is written back to the task settings so the session YAML records
-    it. Raises before any hardware starts when a name is unknown or the list is
-    empty.
+    it; ``all`` on cameras without usable names is dropped instead, as if unset.
+    Raises before any hardware starts when a name is unknown or the list is empty.
     """
     value = patched.get(RECORD_CAMERAS_KEY)
     if value is None:
@@ -480,6 +480,11 @@ def _resolve_record_cameras(args_dict: dict, patched: dict) -> None:
     )
     if narrowed is not None:
         args_dict["cameras_config"] = narrowed
+    if recorded is None:
+        # ``all`` on cameras without names: same as unset, so the task never sees it
+        patched.pop(RECORD_CAMERAS_KEY, None)
+        args_dict.get("settings.task.provenance", {}).pop(RECORD_CAMERAS_KEY, None)
+        return
     patched[RECORD_CAMERAS_KEY] = recorded
     source = args_dict.get("settings.task.provenance", {}).get(RECORD_CAMERAS_KEY, "")
     logging.info(

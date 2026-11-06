@@ -132,14 +132,15 @@ def resolve_record_cameras(
     cameras: CameraConfig | None,
     value: Any,
     config_file_camera: str = "",
-) -> tuple[CameraConfig | None, list[str] | str]:
+) -> tuple[CameraConfig | None, list[str] | None]:
     """Resolve a set ``record_cameras`` value against the setup's cameras.
 
     Returns ``(narrowed, recorded)``: ``narrowed`` is the camera config to hand to
     the task (None keeps the setup's own config, recording all cameras) and
     ``recorded`` is the value to write back to the task settings. For ``all`` it
-    is the list of the setup's camera names, or ``"all"`` when the cameras have no
-    usable names (they all record, as with ``record_cameras`` unset).
+    is the list of the setup's camera names. When the cameras have no usable names
+    it is None: they all record, exactly as with ``record_cameras`` unset, and the
+    setting is dropped so ``all`` never reaches the task.
 
     Raises:
         CameraSelectionError: If the setup has no cameras, the value is empty or
@@ -155,11 +156,12 @@ def resolve_record_cameras(
             return None, camera_names(cameras, config_file_camera)
         except CameraSelectionError as exc:
             log.warning(
-                "%s: all on cameras without usable names (%s); recording all of them",
+                "%s: all on cameras without usable names (%s); recording all of "
+                "them, as when unset",
                 RECORD_CAMERAS_KEY,
                 exc,
             )
-            return None, RECORD_ALL
+            return None, None
     return select_cameras(cameras, names, config_file_camera), names
 
 
