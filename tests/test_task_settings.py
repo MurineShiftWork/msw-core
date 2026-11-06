@@ -187,3 +187,79 @@ def test_subject_overrides_beat_task_mode():
         "probabilities": "subject:P1.yaml",
         "iti": LAYER_CLI,
     }
+
+
+def _setup(overrides: dict):
+    return SimpleNamespace(task_overrides={"seq": overrides})
+
+
+def test_setup_layer_sits_between_overlay_and_mode():
+    """task.yaml < overlay < setup < mode < subject < CLI: each layer beats the one below."""
+    r = _resolve(
+        default_layers=[
+            ("task.yaml", {"a": 1, "b": 1, "c": 1, "d": 1, "e": 1}),
+            ("overlay", {"b": 2, "c": 2, "d": 2, "e": 2}),
+        ],
+        task_modes={"m": {"d": 4, "e": 4}},
+        setup_config=_setup({"c": 3, "d": 3, "e": 3, "record_video": True}),
+        setup_label="setup:rig1.yaml",
+        task_mode="m",
+        subject_config=_subject({"e": 5}),
+        subject_label="subject:M1.yaml",
+    )
+    assert r.settings == {"a": 1, "b": 2, "c": 3, "d": 4, "e": 5, "record_video": True}
+    assert r.provenance == {
+        "a": "task.yaml",
+        "b": "overlay",
+        "c": "setup:rig1.yaml",
+        "d": "mode:m",
+        "e": "subject:M1.yaml",
+        "record_video": "setup:rig1.yaml",
+    }
+
+
+def test_subject_and_cli_override_setup_without_a_mode():
+    r = _resolve(
+        setup_config=_setup({"iti": 0.8, "stop": {"max_trials": {"value": 10}}}),
+        setup_label="setup:rig1.yaml",
+        subject_config=_subject({"iti": 0.9}),
+        subject_label="subject:M1.yaml",
+        cli_overrides=["stop.max_trials.value=20"],
+    )
+    assert r.settings["iti"] == 0.9
+    assert r.settings["stop"]["max_trials"] == {"value": 20, "action": "stop"}
+    assert r.provenance["iti"] == "subject:M1.yaml"
+    assert r.provenance["stop.max_trials.value"] == LAYER_CLI
+    assert r.provenance["stop.max_trials.action"] == "task.yaml"
+
+
+def test_setup_nested_override_attributes_only_its_leaves():
+    r = _resolve(
+        setup_config=_setup({"stop": {"max_trials": {"value": 10}}}),
+        setup_label="setup:rig1.yaml",
+    )
+    assert r.settings["stop"]["max_trials"] == {"value": 10, "action": "stop"}
+    assert r.provenance["stop.max_trials.value"] == "setup:rig1.yaml"
+    assert r.provenance["stop.max_trials.action"] == "task.yaml"
+
+
+def test_setup_without_task_overrides_is_unchanged():
+    base = _resolve(task_mode="probe")
+    for setup in (
+        SimpleNamespace(),  # no attribute at all
+        SimpleNamespace(task_overrides={}),
+        SimpleNamespace(task_overrides={"other_task": {"iti": 9}}),
+    ):
+        r = _resolve(task_mode="probe", setup_config=setup, setup_label="setup:x")
+        assert r.settings == base.settings
+        assert r.provenance == base.provenance
+
+
+def test_build_task_settings_threads_setup_config():
+    out = build_task_settings(
+        task_name="seq",
+        settings_task_default=BUNDLED,
+        task_modes=MODES,
+        setup_config=_setup({"iti": 0.7}),
+    )
+    assert out["iti"] == 0.7

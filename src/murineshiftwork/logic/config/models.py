@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from scipy.optimize import curve_fit as _scipy_curve_fit
 
 # Bare Linux serial device names (no /dev/ prefix) accepted in the `port` field.
@@ -407,6 +407,41 @@ class SetupConfig(BaseModel):
             "Leave empty when Open Ephys is not in use on this rig."
         ),
     )
+    task_overrides: dict[str, dict[str, Any]] = Field(
+        default_factory=dict,
+        description=(
+            "Mapping of task name to settings overrides applied to every run of that task "
+            "on this rig (e.g. record_video for a task only on rigs with cameras for it). "
+            "Sits above the task.yaml defaults and the config_dir overlay, below --task-mode, "
+            "the subject's task_overrides, -ts and injected values. A task_mode here is "
+            "rejected: modes are chosen per run with --task-mode."
+        ),
+    )
+
+    @field_validator("task_overrides", mode="before")
+    @classmethod
+    def _check_task_overrides(cls, value: Any) -> Any:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError(
+                "task_overrides must be a mapping of task name to a mapping of settings, "
+                f"got {type(value).__name__}"
+            )
+        for task, overrides in value.items():
+            if overrides is None:
+                continue
+            if not isinstance(overrides, dict):
+                raise ValueError(
+                    f"task_overrides.{task} must be a mapping of settings, "
+                    f"got {type(overrides).__name__}"
+                )
+            if "task_mode" in overrides:
+                raise ValueError(
+                    f"task_overrides.{task}.task_mode is not supported: modes are chosen "
+                    "per run with --task-mode"
+                )
+        return {task: dict(overrides or {}) for task, overrides in value.items()}
 
     def device_port(self, device_name: str) -> str:
         if device_name not in self.devices:
@@ -493,8 +528,9 @@ class ExecutionConfig(BaseModel):
     task_settings: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "Fully merged task settings dict: task defaults -> subject overrides "
-            "-> CLI overrides, resolved before the session starts."
+            "Fully merged task settings dict: task defaults -> setup overrides "
+            "-> task mode -> subject overrides -> CLI overrides, resolved before the "
+            "session starts."
         ),
     )
 

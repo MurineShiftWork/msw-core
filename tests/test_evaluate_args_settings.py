@@ -101,3 +101,53 @@ def test_unknown_task_lists_available(run_evaluate):
     with pytest.raises(ValueError, match="Unknown task 'no_such_task'") as exc:
         run_evaluate(task="no_such_task")
     assert "demo_sequence" in str(exc.value)
+
+
+def _write_setup(config_dir, name, task_overrides):
+    path = config_dir / "setups" / f"{name}.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump({"name": name, "task_overrides": task_overrides}),
+        encoding="utf-8",
+    )
+
+
+def test_setup_task_overrides_applied_below_subject(run_evaluate):
+    config_dir = run_evaluate.config_dir
+    _write_setup(
+        config_dir,
+        "rig1",
+        {"_test_flush_valves": {"N_FLUSH_CYCLES": 5, "record_video": True}},
+    )
+    _write_subject(config_dir, "subj001")
+    out = run_evaluate(setup="rig1")
+    assert out["settings.task.patched"]["N_FLUSH_CYCLES"] == 5
+    assert out["settings.task.patched"]["record_video"] is True
+    label = f"setup:{config_dir / 'setups' / 'rig1.yaml'}"
+    assert out["settings.task.provenance"]["N_FLUSH_CYCLES"] == label
+    assert out["settings.task.provenance"]["record_video"] == label
+    assert out["run_context"].task_settings["record_video"] is True
+
+    _write_subject(
+        config_dir,
+        "subj001",
+        task_overrides={"_test_flush_valves": {"N_FLUSH_CYCLES": 7}},
+    )
+    out = run_evaluate(setup="rig1")
+    assert out["settings.task.patched"]["N_FLUSH_CYCLES"] == 7
+    assert out["settings.task.provenance"]["N_FLUSH_CYCLES"].startswith("subject:")
+    assert out["settings.task.patched"]["record_video"] is True
+
+
+def test_setup_without_task_overrides_leaves_patched_unchanged(run_evaluate):
+    config_dir = run_evaluate.config_dir
+    _write_subject(config_dir, "subj001")
+    baseline = run_evaluate()
+    path = config_dir / "setups" / "rig1.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump({"name": "rig1"}), encoding="utf-8")
+    out = run_evaluate(setup="rig1")
+    # a loaded setup still injects its valve lookup after resolution; compare the rest
+    patched = {k: v for k, v in out["settings.task.patched"].items() if not callable(v)}
+    assert patched == baseline["settings.task.patched"]
+    assert out["settings.task.provenance"] == baseline["settings.task.provenance"]
