@@ -133,7 +133,7 @@ def test_all_records_every_camera_without_narrowing(rce):
 
 def test_all_on_unnamed_cameras_records_them_all():
     shorthand = CameraConfig(backend="flir_bonsai", n_cameras=2)
-    assert resolve_record_cameras(shorthand, "all") == (None, "all")
+    assert resolve_record_cameras(shorthand, "all") == (None, None)
 
 
 def test_all_keeps_a_multi_camera_workflow():
@@ -201,6 +201,16 @@ def test_evaluate_all_records_the_names_and_keeps_the_config(rce):
     assert args["cameras_config"] is rce
     assert patched["record_cameras"] == ["top", "left", "bottom"]
     assert args["settings.task.provenance"]["record_cameras"] == "setup:rig.yaml"
+
+
+def test_evaluate_all_on_unnamed_cameras_is_dropped():
+    shorthand = CameraConfig(backend="flir_bonsai", n_cameras=2)
+    patched = {"record_cameras": "all"}
+    args = _args(shorthand, patched)
+    _resolve_record_cameras(args, patched)
+    assert args["cameras_config"] is shorthand
+    assert "record_cameras" not in patched
+    assert "record_cameras" not in args["settings.task.provenance"]
 
 
 @pytest.mark.parametrize("patched", [{}, {"record_cameras": None}])
