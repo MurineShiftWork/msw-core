@@ -144,3 +144,40 @@ def test_update_valve_calibration_force_writes_bad_fit(config_dir):
     assert wrote is True
     reloaded = load_setup_config(config_dir, _SETUP_NAME)
     assert "9" in reloaded.calibrations.bpod_valve
+
+
+# --------------------------------------------------------------------------- #
+# task_overrides: optional per-rig task settings, validated at load
+
+
+def _write_setup(config_dir, data):
+    path = Path(config_dir) / "setups" / "rig_x.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump({"name": "rig_x", **data}), encoding="utf-8")
+
+
+def test_setup_without_task_overrides_loads_empty(config_dir):
+    assert load_setup_config(config_dir, _SETUP_NAME).task_overrides == {}
+
+
+def test_setup_task_overrides_load(tmp_path):
+    _write_setup(tmp_path, {"task_overrides": {"sequence": {"record_video": True}}})
+    cfg = load_setup_config(tmp_path, "rig_x")
+    assert cfg.task_overrides == {"sequence": {"record_video": True}}
+
+
+@pytest.mark.parametrize(
+    ("task_overrides", "message"),
+    [
+        (["sequence"], "task_overrides must be a mapping of task name"),
+        ({"sequence": True}, "task_overrides.sequence must be a mapping"),
+        ({"sequence": ["record_video"]}, "task_overrides.sequence must be a mapping"),
+        ({"sequence": {"task_mode": "probe"}}, "task_mode is not supported"),
+    ],
+)
+def test_setup_task_overrides_bad_shape_refused_at_load(
+    tmp_path, task_overrides, message
+):
+    _write_setup(tmp_path, {"task_overrides": task_overrides})
+    with pytest.raises(ValueError, match=message):
+        load_setup_config(tmp_path, "rig_x")
