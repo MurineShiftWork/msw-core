@@ -245,6 +245,14 @@ def _subject_label(args_dict: dict) -> str:
     return f"subject:{subject}"
 
 
+def _setup_label(args_dict: dict) -> str:
+    """Provenance label for the setup's task_overrides layer (its YAML path)."""
+    setup = args_dict.get("setup", "")
+    if args_dict.get("config_dir") and setup:
+        return f"setup:{Path(args_dict['config_dir']) / 'setups' / f'{setup}.yaml'}"
+    return f"setup:{setup}"
+
+
 def _extra_injections_from_args(args_dict: dict) -> dict:
     """Collect fallback-injection keys from args_dict for build_task_settings."""
     injections: dict = {}
@@ -583,6 +591,8 @@ def evaluate_args(args_dict=None):
         task_mode=args_dict.get("task_mode", ""),
         cli_overrides=args_dict.get("task_settings_overrides", []),
         extra_injections=_extra_injections_from_args(args_dict),
+        setup_config=args_dict.get("setup_config"),
+        setup_label=_setup_label(args_dict),
     )
     patched = resolved.settings
     args_dict["settings.task.patched"] = patched

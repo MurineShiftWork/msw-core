@@ -3,13 +3,18 @@
 Priority chain (lowest → highest):
   1. bundled task.yaml default:
   2. config_dir overlay task.yaml default:
-  3. CLI --task-mode (named preset from the task.yaml mode: section)
-  4. subject YAML task_overrides
-  5. CLI -ts KEY=VALUE overrides (dotted keys reach nested settings: -ts a.b.c=1)
-  6. extra injections (only for keys not already present)
+  3. setup YAML task_overrides (per rig, e.g. record_video only where cameras exist)
+  4. CLI --task-mode (named preset from the task.yaml mode: section)
+  5. subject YAML task_overrides
+  6. CLI -ts KEY=VALUE overrides (dotted keys reach nested settings: -ts a.b.c=1)
+  7. extra injections (only for keys not already present)
+
+The setup layer sits below the mode so a mode chosen for a run still applies on every rig;
+the setup only changes what a rig contributes to the defaults.
 
 Modes are chosen per run. A ``task_mode`` stored in a subject's ``task_overrides`` (the former
-"sticky mode") is rejected with an error, so a mode is never reapplied silently.
+"sticky mode") is rejected with an error, so a mode is never reapplied silently. The setup
+config rejects a ``task_mode`` in its ``task_overrides`` at load for the same reason.
 
 Every leaf of the resolved dict is attributed to the layer that last set it (``provenance``:
 dotted key → layer label), so tasks can report where each setting came from.
@@ -130,6 +135,13 @@ def _set_dotted(settings: dict, key: str, value: Any) -> tuple[dict, dict]:
     return deep_merge(settings, layer), layer
 
 
+def _task_overrides_for(config: Any, task_name: str) -> dict:
+    """Return a copy of ``config.task_overrides[task_name]`` ({} when absent or no config)."""
+    if config is None:
+        return {}
+    return dict((getattr(config, "task_overrides", None) or {}).get(task_name) or {})
+
+
 def resolve_task_settings(
     task_name: str,
     default_layers: list[tuple[str, dict]],
@@ -139,6 +151,8 @@ def resolve_task_settings(
     task_mode: str = "",
     cli_overrides: list | None = None,
     extra_injections: dict | None = None,
+    setup_config: Any = None,
+    setup_label: str = "setup",
 ) -> ResolvedTaskSettings:
     """Resolve task settings through the priority chain, tracking per-leaf provenance.
 
@@ -152,6 +166,9 @@ def resolve_task_settings(
         task_mode: the --task-mode given for this run (empty string = no mode).
         cli_overrides: list of 'KEY=VALUE' strings from -ts.
         extra_injections: keys injected only if not already present in the resolved dict.
+        setup_config: SetupConfig instance or None; its ``task_overrides[task_name]`` is
+            applied after the default layers and before the task mode.
+        setup_label: provenance label for the setup layer (e.g. ``setup:<YAML path>``).
     """
     patched: dict = {}
     provenance: dict[str, str] = {}
@@ -160,9 +177,13 @@ def resolve_task_settings(
             patched = deep_merge(patched, layer)
             _record(provenance, layer, label)
 
-    subject_patch = (
-        dict(subject_config.task_overrides.get(task_name, {})) if subject_config else {}
-    )
+    setup_patch = _task_overrides_for(setup_config, task_name)
+    if setup_patch:
+        patched = deep_merge(patched, setup_patch)
+        _record(provenance, setup_patch, setup_label)
+        logging.debug(f"Setup YAML task_overrides for '{task_name}': {setup_patch}")
+
+    subject_patch = _task_overrides_for(subject_config, task_name)
     if "task_mode" in subject_patch:
         raise StickyTaskModeError(
             f"{subject_label}: task_overrides.{task_name}.task_mode = "
@@ -216,6 +237,7 @@ def build_task_settings(
     task_mode: str = "",
     cli_overrides: list | None = None,
     extra_injections: dict | None = None,
+    setup_config: Any = None,
 ) -> dict:
     """Return only the resolved task-settings dict (single merged default layer).
 
@@ -229,4 +251,5 @@ def build_task_settings(
         task_mode=task_mode,
         cli_overrides=cli_overrides,
         extra_injections=extra_injections,
+        setup_config=setup_config,
     ).settings
