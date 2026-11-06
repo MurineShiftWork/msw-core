@@ -336,10 +336,11 @@ def load_subject_config(
     """Load SubjectConfig from {config_dir}/subjects/{subject_name}.yaml.
 
     Returns None silently if the file does not exist; INI-based subject
-    loading in evaluate.py is the fallback.
+    loading in evaluate.py is the fallback. Test subjects (``_test_*``) load like
+    any other subject when they have a file.
     Migrates legacy configs (no schema_version) transparently.
     """
-    if not subject_name or subject_name.startswith("_test_"):
+    if not subject_name:
         return None
     path = Path(config_dir) / "subjects" / f"{subject_name}.yaml"
     if not path.exists():
