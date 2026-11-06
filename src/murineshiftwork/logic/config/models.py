@@ -187,6 +187,17 @@ class CameraConfig(BaseModel):
     workflow: str = ""  # workflow stem; auto-derived as run-flir-{driver}-1cam if empty
     cameras: list[CameraUnit] = []  # preferred; one entry per camera
     n_cameras: int = 1  # flat shorthand when cameras list is empty
+    # Set by the framework on the copy handed to a task, from the task setting
+    # record_cameras: the names of the cameras to record. None records all cameras.
+    selected: list[str] | None = None
+
+    @model_validator(mode="after")
+    def _check_names(self) -> CameraConfig:
+        names = [c.name for c in self.cameras if c.name]
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        if dupes:
+            raise ValueError(f"cameras: duplicate camera names {dupes}")
+        return self
 
 
 # ---------------------------------------------------------------------------

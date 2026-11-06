@@ -151,3 +151,92 @@ def test_setup_without_task_overrides_leaves_patched_unchanged(run_evaluate):
     patched = {k: v for k, v in out["settings.task.patched"].items() if not callable(v)}
     assert patched == baseline["settings.task.patched"]
     assert out["settings.task.provenance"] == baseline["settings.task.provenance"]
+
+
+# --- record_cameras through the settings layers ---
+
+
+@pytest.fixture
+def camera_setup(run_evaluate, tmp_path):
+    """A setup "rig1" with RCE cameras top/left/bottom and per-task overrides."""
+    ensemble = tmp_path / "ensemble.yaml"
+    ensemble.write_text(
+        yaml.safe_dump(
+            {
+                "agents": {
+                    f"agent-{i}": {"camera_config": {"description": name}}
+                    for i, name in enumerate(["top", "left", "bottom"])
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    config_dir = run_evaluate.config_dir
+
+    def _write(task_overrides):
+        path = config_dir / "setups" / "rig1.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            yaml.safe_dump(
+                {
+                    "name": "rig1",
+                    "cameras": {"backend": "rce", "config": str(ensemble)},
+                    "task_overrides": task_overrides,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return f"setup:{path}"
+
+    return _write
+
+
+def test_record_cameras_all_from_setup_task_overrides(run_evaluate, camera_setup):
+    label = camera_setup(
+        {"_test_flush_valves": {"record_video": True, "record_cameras": "all"}}
+    )
+    _write_subject(run_evaluate.config_dir, "subj001")
+    out = run_evaluate(setup="rig1")
+    assert out["settings.task.patched"]["record_cameras"] == ["top", "left", "bottom"]
+    assert out["settings.task.provenance"]["record_cameras"] == label
+    assert out["cameras_config"].selected is None
+
+
+def test_subject_record_cameras_wins_over_setup(run_evaluate, camera_setup):
+    camera_setup({"_test_flush_valves": {"record_cameras": "all"}})
+    _write_subject(
+        run_evaluate.config_dir,
+        "subj001",
+        task_overrides={"_test_flush_valves": {"record_cameras": ["bottom"]}},
+    )
+    out = run_evaluate(setup="rig1")
+    assert out["settings.task.patched"]["record_cameras"] == ["bottom"]
+    assert out["settings.task.provenance"]["record_cameras"].startswith("subject:")
+    assert out["cameras_config"].selected == ["bottom"]
+
+
+def test_cli_record_cameras_all_wins_over_subject(run_evaluate, camera_setup):
+    camera_setup({})
+    _write_subject(
+        run_evaluate.config_dir,
+        "subj001",
+        task_overrides={"_test_flush_valves": {"record_cameras": ["bottom"]}},
+    )
+    out = run_evaluate(setup="rig1", task_settings_overrides=["record_cameras=all"])
+    assert out["settings.task.patched"]["record_cameras"] == ["top", "left", "bottom"]
+    assert out["cameras_config"].selected is None
+
+
+def test_record_cameras_unset_records_all_cameras(run_evaluate, camera_setup):
+    camera_setup({})
+    _write_subject(run_evaluate.config_dir, "subj001")
+    out = run_evaluate(setup="rig1")
+    assert "record_cameras" not in out["settings.task.patched"]
+    assert out["cameras_config"].selected is None
+
+
+def test_unknown_record_camera_from_setup_refuses_the_run(run_evaluate, camera_setup):
+    camera_setup({"_test_flush_valves": {"record_cameras": ["front"]}})
+    _write_subject(run_evaluate.config_dir, "subj001")
+    with pytest.raises(ValueError, match="unknown camera"):
+        run_evaluate(setup="rig1")
