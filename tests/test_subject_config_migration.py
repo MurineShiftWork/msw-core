@@ -136,6 +136,21 @@ def test_load_subject_config_migrates_v1_file(tmp_path):
     assert cfg.task_overrides["sequence"]["start_level"] == 20  # preserved
 
 
+def test_load_subject_config_loads_test_subject_file(tmp_path):
+    subjects = tmp_path / "subjects"
+    subjects.mkdir()
+    (subjects / "_test_subject.yaml").write_text(
+        yaml.safe_dump(_v1_config("_test_subject"))
+    )
+    cfg = load_subject_config(tmp_path, "_test_subject")
+    assert cfg is not None
+    assert cfg.task_overrides["sequence"]["start_level"] == 20
+
+
+def test_load_subject_config_without_file_is_none(tmp_path):
+    assert load_subject_config(tmp_path, "_test_subject") is None
+
+
 # --------------------------------------------------------------------------- #
 # save_subject_task_state writer
 
