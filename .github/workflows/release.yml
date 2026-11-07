@@ -1,9 +1,8 @@
 name: Release
 
-# Publish only. Triggered by a tag (hand-pushed tags publish directly) or by a
-# workflow_dispatch from versioning.yml (the automatic path, since a
-# GITHUB_TOKEN-pushed tag cannot trigger push:tags). Stays named release.yml so
-# the PyPI trusted-publisher (OIDC) binding is unchanged.
+# Publish only. Triggered by a tag: versioning.yml pushes it with the App token,
+# or by hand; workflow_dispatch republishes an existing tag. Stays named release.yml
+# so the PyPI trusted-publisher (OIDC) binding is unchanged.
 on:
   push:
     tags: ['v*']
