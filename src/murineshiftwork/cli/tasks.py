@@ -7,10 +7,11 @@ import sys
 from importlib.metadata import entry_points
 from pathlib import Path
 
-import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from murineshiftwork.logic.config.ini import read_task_modes
 from murineshiftwork.logic.machine_config import resolve_config_dir
+from murineshiftwork.logic.task_settings import merge_task_modes
 
 # ---------------------------------------------------------------------------
 # Task YAML schema
@@ -216,7 +217,14 @@ def run_tasks_defaults(task="", **kwargs):
     print(yaml_path.read_text())
 
 
-def run_tasks_modes(task="", **kwargs):
+def run_tasks_modes(task="", config_dir="", **kwargs):
+    """Print the modes ``--task-mode`` accepts for a task, as ``msw run`` merges them.
+
+    Modes come from the bundled task.yaml and from ``<config_dir>/tasks/<task>/task.yaml``,
+    merged per mode with ``merge_task_modes`` (the same call ``msw run`` makes). Each mode is
+    tagged with where it is defined: ``[bundled]``, ``[overlay]`` or ``[bundled+overlay]``.
+    Without a config_dir only the bundled modes are listed.
+    """
     if not task:
         print(
             "Error: task name required. Usage: msw tasks modes <task_name>",
@@ -235,12 +243,17 @@ def run_tasks_modes(task="", **kwargs):
         sys.exit(1)
 
     yaml_path = _task_yaml_path(name)
-    if not yaml_path.exists():
+    _config_dir = resolve_config_dir(cli_override=config_dir)
+    overlay_path = (
+        Path(_config_dir) / "tasks" / name / "task.yaml" if _config_dir else None
+    )
+    if not yaml_path.exists() and not (overlay_path and overlay_path.exists()):
         print(f"Error: no task.yaml found for '{name}' at {yaml_path}", file=sys.stderr)
         sys.exit(1)
 
-    data = yaml.safe_load(yaml_path.read_text()) or {}
-    modes = data.get("mode") or {}
+    bundled = read_task_modes(str(yaml_path))
+    overlay = read_task_modes(str(overlay_path)) if overlay_path else {}
+    modes = merge_task_modes(bundled, overlay)
 
     if not modes:
         print(f"{name}: no named modes defined.")
@@ -248,11 +261,19 @@ def run_tasks_modes(task="", **kwargs):
 
     print(f"\n{name} modes:\n")
     for mode_name, overrides in modes.items():
+        source = "+".join(
+            label
+            for label, layer in (("bundled", bundled), ("overlay", overlay))
+            if mode_name in layer
+        )
+        tag = f"[{source}]"
         if overrides:
             keys = ", ".join(sorted(overrides.keys()))
-            print(f"  {mode_name:<30}  overrides: {keys}")
+            print(f"  {mode_name:<30}  {tag:<18}  overrides: {keys}")
         else:
-            print(f"  {mode_name}")
+            print(f"  {mode_name:<30}  {tag}")
+    if overlay_path and overlay_path.exists():
+        print(f"\n  overlay: {overlay_path}")
     print()
 
 

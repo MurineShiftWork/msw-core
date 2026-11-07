@@ -753,6 +753,7 @@ def make_subparser_tasks(sub_parsers):
         epilog=_CREDIT_EPILOG,
     )
     pm.add_argument("task", type=str, help="Task name or unique substring")
+    pm.add_argument("-cd", "--config-dir", type=str, default="", dest="config_dir")
     pm.set_defaults(func=run_tasks_modes)
 
     # --- init-configs ---

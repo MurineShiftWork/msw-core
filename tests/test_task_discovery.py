@@ -11,6 +11,7 @@ from murineshiftwork.cli.tasks import (
     find_task_by_name,
     list_available_tasks,
     load_task_module,
+    run_tasks_modes,
 )
 
 
@@ -51,3 +52,30 @@ def test_get_task_dir_returns_the_task_package_dir(fake_tasks):
 
 def test_get_task_dir_unknown_task_is_empty(fake_tasks):
     assert get_task_dir("nonexistent_xyz_task") == ""
+
+
+def test_tasks_modes_lists_overlay_modes_with_their_source(
+    fake_tasks, tmp_path, capsys
+):
+    overlay = tmp_path / "configs" / "tasks" / "demo_sequence" / "task.yaml"
+    overlay.parent.mkdir(parents=True)
+    overlay.write_text(
+        "mode:\n  fast: {iti: 0.2}\n  slow: {iti: 2.0}\n", encoding="utf-8"
+    )
+    run_tasks_modes(task="demo_sequence", config_dir=str(tmp_path / "configs"))
+    lines = {
+        line.split()[0]: line
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip()
+    }
+    assert "[bundled+overlay]" in lines["fast"]
+    assert "[overlay]" in lines["slow"]
+
+
+def test_tasks_modes_without_config_dir_lists_bundled_modes(
+    fake_tasks, monkeypatch, capsys
+):
+    monkeypatch.setattr("murineshiftwork.cli.tasks.resolve_config_dir", lambda **kw: "")
+    run_tasks_modes(task="demo_sequence")
+    out = capsys.readouterr().out
+    assert "fast" in out and "[bundled]" in out and "overlay" not in out
