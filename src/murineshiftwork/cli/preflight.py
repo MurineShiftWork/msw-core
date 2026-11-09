@@ -53,11 +53,17 @@ def preflight_hardware_check(args_dict: dict) -> None:
         if bpod_port and not test_serial_port_is_accessible(bpod_port):
             errors.append(f"bpod serial port not accessible: {bpod_port!r}")
 
-    # --- Camera config file (if task records video) ---
+    # --- Camera (if task records video): what the setup's camera backend needs ---
     if task_settings.get("record_video", False):
-        cam_cfg = args_dict.get("config_file_camera", "")
-        if not cam_cfg or not Path(cam_cfg).exists():
-            errors.append(f"Camera config not found: {cam_cfg!r}")
+        cameras = getattr(setup_config, "cameras", None)
+        if cameras is not None and cameras.backend == "flir_bonsai":
+            # No RCE config file: Bonsai is found at launch (setup bonsai_exe, else BONSAI_EXE).
+            if cameras.bonsai_exe and not Path(cameras.bonsai_exe).exists():
+                errors.append(f"Bonsai executable not found: {cameras.bonsai_exe!r}")
+        else:
+            cam_cfg = args_dict.get("config_file_camera", "")
+            if not cam_cfg or not Path(cam_cfg).exists():
+                errors.append(f"Camera config not found: {cam_cfg!r}")
 
     if errors:
         bullet_list = "\n".join(f"  • {e}" for e in errors)
