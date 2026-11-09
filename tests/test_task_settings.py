@@ -12,6 +12,7 @@ from murineshiftwork.logic.task_settings import (
     StickyTaskModeError,
     build_task_settings,
     merge_task_modes,
+    parse_key_value_list,
     resolve_task_settings,
 )
 
@@ -263,3 +264,19 @@ def test_build_task_settings_threads_setup_config():
         setup_config=_setup({"iti": 0.7}),
     )
     assert out["iti"] == 0.7
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("false", False),
+        ("TRUE", True),
+        ("null", None),
+        ("False", False),
+        ("2.5", 2.5),
+        ("[1, 2]", [1, 2]),
+        ("abc", "abc"),
+    ],
+)
+def test_cli_values_accept_config_file_booleans(raw, expected):
+    assert parse_key_value_list([f"record_video={raw}"]) == {"record_video": expected}
