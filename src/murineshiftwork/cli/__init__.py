@@ -34,7 +34,21 @@ def run_cli(*args):
         args = args + ["-h"]
 
     args_dict = parse_args(args=args)
+    try:
+        _dispatch(args_dict)
+    except BpodConnectionError:
+        sys.exit(1)
+    except Exception:
+        # Log, not re-raise: the root logger writes to the console and the central CLI log, so
+        # the traceback lands in both once (an uncaught exception reaches the console only).
+        logging.exception("msw %s failed", args_dict.get("command", ""))
+        sys.exit(1)
 
+    logging.debug("EXITING CLI.")
+
+
+def _dispatch(args_dict: dict) -> None:
+    """Evaluate run arguments (``run`` only), then call the command."""
     # Only `run` needs the hardware/subject/task context built by evaluate_args.
     # All other commands - built-ins (init, setup, ...) and plugin subcommands
     # registered via the msw.cli entry-point group (e.g. `oe`) - dispatch
@@ -46,14 +60,9 @@ def run_cli(*args):
             return
 
     # Call module. A Bpod connection failure raises BpodConnectionError (instead of the library
-    # calling sys.exit); the operator already saw the boxed message, so translate it to exit 1
-    # here at the CLI boundary. A GUI/RPC caller catches the exception instead.
-    try:
-        args_dict["func"](**args_dict)
-    except BpodConnectionError:
-        sys.exit(1)
-
-    logging.debug("EXITING CLI.")
+    # calling sys.exit); the operator already saw the boxed message, so run_cli translates it to
+    # exit 1 at the CLI boundary. A GUI/RPC caller catches the exception instead.
+    args_dict["func"](**args_dict)
 
 
 if __name__ == "__main__":
