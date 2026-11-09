@@ -10,6 +10,7 @@ from murineshiftwork.cli.config import (
     run_config_show,
     run_config_upgrade,
 )
+from murineshiftwork.cli.configs import run_configs_archive
 from murineshiftwork.cli.defaults import (
     available_tasks,
     default_config_dir,
@@ -689,6 +690,46 @@ def make_subparser_config(sub_parsers):
     pm.set_defaults(func=run_config_migrate_subjects)
 
 
+def make_subparser_configs(sub_parsers):
+    p = sub_parsers.add_parser(
+        "configs",
+        help="Manage files in the configs repo",
+        formatter_class=ArgparseFormatter,
+        description=dedent(
+            """\
+            Configs repo management.
+
+            Commands:
+              msw configs archive <path> ...   git mv config files into archive/
+
+            A file moves to archive/<original relative path> inside the configs repo
+            (e.g. subjects/s008.yaml -> archive/subjects/s008.yaml). Loaders never read
+            archive/. Moves are staged, not committed. Paths are relative to the current
+            directory or the configs repo.
+
+            Examples:
+              msw configs archive subjects/s008_x.yaml --dry-run
+              msw configs archive subjects/s008_x.yaml setups/old_rig.yaml
+            """
+        ),
+        epilog=_CREDIT_EPILOG,
+    )
+    sub = p.add_subparsers(metavar="subcommand", dest="subcommand")
+    sub.required = True
+    pa = sub.add_parser(
+        "archive",
+        help="Move config files into archive/ with git mv (no commit)",
+        formatter_class=ArgparseFormatter,
+        epilog=_CREDIT_EPILOG,
+    )
+    pa.add_argument("paths", nargs="+", metavar="path", help="Tracked config file(s)")
+    pa.add_argument(
+        "--dry-run", action="store_true", dest="dry_run", help="Preview without moving"
+    )
+    pa.add_argument("-cd", "--config-dir", type=str, default="", dest="config_dir")
+    pa.set_defaults(func=run_configs_archive)
+
+
 def make_subparser_tasks(sub_parsers):
     p = sub_parsers.add_parser(
         "tasks",
@@ -804,6 +845,7 @@ def parse_args(args=None):
     make_subparser_post(sub_parsers)
     make_subparser_tasks(sub_parsers)
     make_subparser_config(sub_parsers)
+    make_subparser_configs(sub_parsers)
 
     # Load plugin subcommands registered under the "msw.cli" entry-point group.
     # Each plugin calls register(sub_parsers) to add its own subparser(s).
