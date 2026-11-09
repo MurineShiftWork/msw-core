@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from murineshiftwork.cli.preflight import preflight_hardware_check
+from murineshiftwork.logic.config.models import CameraConfig
 from murineshiftwork.logic.run_context import DevicePorts, RunContext
 
 
@@ -14,8 +15,9 @@ class _Cfg:
 
 
 class _Setup:
-    def __init__(self, devices):
+    def __init__(self, devices, cameras=None):
         self.devices = devices
+        self.cameras = cameras
 
     def device_port(self, name):
         return ""  # no config-port fallback in these tests
@@ -110,6 +112,23 @@ def test_camera_config_present_passes(tmp_path):
     d = _args(tmp_path, None, DevicePorts(), config_file_camera=str(cam))
     d["settings.task.patched"] = {"record_video": True}
     preflight_hardware_check(d)  # no raise
+
+
+def test_flir_bonsai_setup_needs_no_rce_camera_config(tmp_path):
+    setup = _Setup({}, CameraConfig(backend="flir_bonsai"))
+    d = _args(tmp_path, setup, DevicePorts(), config_file_camera="camera.rcc.config")
+    d["settings.task.patched"] = {"record_video": True}
+    preflight_hardware_check(d)  # no raise
+
+
+def test_flir_bonsai_reports_missing_bonsai_exe(tmp_path):
+    cameras = CameraConfig(
+        backend="flir_bonsai", bonsai_exe=str(tmp_path / "Bonsai.exe")
+    )
+    d = _args(tmp_path, _Setup({}, cameras), DevicePorts())
+    d["settings.task.patched"] = {"record_video": True}
+    with pytest.raises(RuntimeError, match="Bonsai executable not found"):
+        preflight_hardware_check(d)
 
 
 def test_reports_output_dir_that_cannot_be_created(tmp_path):
