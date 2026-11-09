@@ -45,8 +45,17 @@ class ResolvedTaskSettings:
     mode: str = ""
 
 
+#: YAML/JSON spellings accepted for -ts values that Python literals spell differently.
+_WORD_VALUES = {"true": True, "false": False, "null": None, "none": None}
+
+
 def parse_key_value_list(kv_list: list) -> dict:
-    """Parse ['KEY=VALUE', ...] into a flat dict with type coercion (keys may be dotted)."""
+    """Parse ['KEY=VALUE', ...] into a flat dict with type coercion (keys may be dotted).
+
+    Values are Python literals (``1``, ``2.5``, ``[1, 2]``, ``True``); ``true``/``false``/
+    ``null`` in any case are accepted too, since config files spell them that way. Anything else
+    stays a string.
+    """
     result = {}
     for item in kv_list:
         item = item.strip().strip("'\"")
@@ -58,7 +67,7 @@ def parse_key_value_list(kv_list: list) -> dict:
         try:
             result[k] = ast.literal_eval(v)
         except (ValueError, SyntaxError):
-            result[k] = v
+            result[k] = _WORD_VALUES.get(v.lower(), v)
     return result
 
 
