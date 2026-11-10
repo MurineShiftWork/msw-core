@@ -193,6 +193,10 @@ def update_session_yaml(session_file_path, **sections):
 RELAY_DROP_LOG_EVERY = 100
 
 
+class TaskFailedError(RuntimeError):
+    """The task thread ended with an exception; the session is marked aborted."""
+
+
 class TaskRunner(Thread):
     """Base class for task threads.
 
@@ -211,7 +215,25 @@ class TaskRunner(Thread):
         self.bpod = bpod
         self.input_kwargs = kwargs
         self.relay_drops = 0
+        # The exception that ended run(), if any. A thread's exception never reaches the caller on
+        # its own, so TaskProcess reads this to fail the session instead of reporting success.
+        self.exception: BaseException | None = None
         self.prepare()
+
+    def start(self) -> None:
+        task_run = self.run
+
+        def _run() -> None:
+            try:
+                task_run()
+            except KeyboardInterrupt:
+                logging.info("Task %s stopped by Ctrl+C", type(self).__name__)
+            except BaseException as exc:
+                self.exception = exc
+                logging.exception("Task %s failed", type(self).__name__)
+
+        self.run = _run  # type: ignore[method-assign]
+        super().start()
 
     def prepare(self):
         """Override for setup work before the task starts (load settings, open video, etc.)."""
@@ -517,13 +539,18 @@ class TaskProcess:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         post_exc = None
+        task_exc = getattr(self.task_runner, "exception", None)
         try:
             if self._hook_ctx is not None:
                 try:
                     run_post_hooks(self._post_hooks, self._hook_ctx)
                 except SessionAbortError as exc:
                     post_exc = exc
-            status = "aborted" if exc_type is not None else "complete"
+            status = (
+                "aborted"
+                if exc_type is not None or task_exc is not None
+                else "complete"
+            )
             if self.session_paths:
                 _container = Path(self.session_paths["session_folder"]).parent
                 finalize_acquisition_in_session(
@@ -541,6 +568,10 @@ class TaskProcess:
                 signal.signal(signal.SIGINT, signal.default_int_handler)
         if post_exc is not None:
             raise post_exc
+        if exc_type is None and task_exc is not None:
+            raise TaskFailedError(
+                f"task {self.task_name!r} failed: {task_exc!r}"
+            ) from task_exc
 
     def _start_relay(self) -> None:
         from murineshiftwork.logic.machine_config import read_log_config
