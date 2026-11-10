@@ -58,3 +58,9 @@ def fake_tasks(tmp_path, monkeypatch):
     yield dirs
     for mod in [m for m in sys.modules if m.split(".")[0] == _FAKE_PKG]:
         del sys.modules[mod]
+
+
+@pytest.fixture(autouse=True)
+def _clear_simulate_mark(monkeypatch):
+    """A --simulate run marks the process environment; keep tests independent of each other."""
+    monkeypatch.delenv("MSW_SIMULATE", raising=False)

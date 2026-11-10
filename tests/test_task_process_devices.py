@@ -58,3 +58,11 @@ def test_devices_without_bpod_leaves_bpod_unset(tmp_path):
     tp = _task_process(tmp_path, devices={"scale": object()})
     assert tp.bpod is None
     assert not tp.serial_is_open
+
+
+def test_simulate_reaches_the_task_kwargs(tmp_path):
+    # `simulate` is a named TaskProcess parameter; tasks read it from input_kwargs
+    tp = _task_process(tmp_path, bpod=_open_sim(), simulate=True)
+    assert tp.input_kwargs["simulate"] is True
+    tp = _task_process(tmp_path, bpod=_open_sim())
+    assert tp.input_kwargs["simulate"] is False

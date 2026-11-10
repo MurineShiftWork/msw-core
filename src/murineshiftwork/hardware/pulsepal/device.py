@@ -35,6 +35,9 @@ class PulsePalDevice(ManagedDevice):
             return SimPulsePal()
         from pypulsepal import PulsePal as _PulsePal
 
+        from murineshiftwork.hardware.simulate_guard import refuse_real_hardware
+
+        refuse_real_hardware("PulsePal", self._serial_port)
         pulsepal = _PulsePal(serial_port=self._serial_port)
         log.info(
             "PulsePal: connected on %s (firmware v%s)",

@@ -64,6 +64,9 @@ class StageDevice(ManagedDevice):
             return SimStage()
         from one_axis_stage.controller import StageController
 
+        from murineshiftwork.hardware.simulate_guard import refuse_real_hardware
+
+        refuse_real_hardware("stage", self._serial_port)
         cfg = dict(self._config)
         cfg["connection"] = {
             **cfg.get("connection", {}),
