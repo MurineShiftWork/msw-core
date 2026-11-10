@@ -355,6 +355,9 @@ class TaskProcess:
         )
         self.debug = _debug
         self.simulate = simulate
+        # `simulate` is a named parameter here, so it is not in kwargs; tasks read it from
+        # input_kwargs (it is part of the task boundary), so put it back.
+        self.input_kwargs["simulate"] = bool(simulate)
         self.session_uuid = str(uuid.uuid4())
 
         self.task_name = self.task_in

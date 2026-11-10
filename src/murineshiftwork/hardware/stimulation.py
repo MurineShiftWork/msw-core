@@ -376,6 +376,9 @@ class Stimulation:
     def connect(self, handle=None):
         self._owns_connection = handle is None
         if handle is None:
+            from murineshiftwork.hardware.simulate_guard import refuse_real_hardware
+
+            refuse_real_hardware("PulsePal", self.port)
             self.pulsepal = _PulsePal(serial_port=self.port)
             for channel, params in self._channel_params.items():
                 for param_name, value in params.items():

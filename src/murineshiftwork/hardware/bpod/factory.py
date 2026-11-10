@@ -72,6 +72,9 @@ class BpodFactory:
         """
         if self._connected or self._exiting:
             return
+        from murineshiftwork.hardware.simulate_guard import refuse_real_hardware
+
+        refuse_real_hardware("Bpod", self.serial_port)
         retries = max_try if max_try is not None else self.connect_retries
         last_exc: Exception | None = None
         for attempt in range(1, retries + 1):

@@ -8,6 +8,7 @@ from typing import Any
 
 import yaml
 
+from murineshiftwork.hardware.simulate_guard import mark_simulated
 from murineshiftwork.logic.machine_config import (
     get_machine_config_path,
     resolve_config_dir,
@@ -156,6 +157,9 @@ def _apply_stage_position(ctx: RunContext) -> None:
     serial_port_stage = ctx.ports.stage
     if not position_name or not serial_port_stage:
         return
+    if ctx.simulate:
+        logging.info(f"simulate: not moving the stage to '{position_name}'")
+        return
 
     calib_path = Path(ctx.task_settings.get("calibration_file_stage", "")).expanduser()
     if not calib_path.exists():
@@ -201,6 +205,9 @@ def run_task(**args_dict):
     # call). Reads below come off the typed context; the task boundary still receives **args_dict.
     ctx = args_dict.get("run_context") or RunContext.from_args_dict(args_dict)
 
+    # From here on every real device open refuses in a --simulate run (also in the task's
+    # child process), so a task that builds its own connection cannot reach the rig.
+    mark_simulated(ctx.simulate)
     _apply_stage_position(ctx)
     mod = importlib.import_module(f"murineshiftwork.tasks.{ctx.task_name}.task")
 
