@@ -863,8 +863,10 @@ def parse_args(args=None):
                 _logging.debug(
                     "msw.cli plugin %r failed to register: %s", _ep.name, _exc
                 )
-    except Exception:
-        pass
+    except (ImportError, OSError, ValueError) as _exc:
+        import logging as _logging
+
+        _logging.warning("msw.cli plugin discovery failed: %s", _exc)
 
     parsed_args = main_parser.parse_args(args=args)
     return parsed_args.__dict__

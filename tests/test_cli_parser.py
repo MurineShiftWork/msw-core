@@ -98,3 +98,16 @@ def test_non_run_command_bypasses_evaluate_args(monkeypatch):
     monkeypatch.setattr(cli_mod, "evaluate_args", _boom)
     cli_mod.run_cli(["oe", "status"])
     assert called.get("ok") is True
+
+
+def test_plugin_discovery_failure_is_logged_not_swallowed(monkeypatch, caplog):
+    import importlib.metadata
+
+    def _boom(**_kw):
+        raise OSError("entry point scan failed")
+
+    monkeypatch.setattr(importlib.metadata, "entry_points", _boom)
+    with caplog.at_level("WARNING"):
+        parsed = parse_args(["setup", "list"])
+    assert parsed["command"] == "setup"
+    assert "plugin discovery failed" in caplog.text

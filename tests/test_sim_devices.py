@@ -53,3 +53,19 @@ def test_stimulation_runs_against_sim_pulsepal():
     )  # exercises _sync_channel_configs + sync_all_params + off
     assert stim.is_open() is False  # sim handle has no serial connection
     stim.off()
+
+
+def test_stimulation_disconnect_logs_hardware_error_and_clears_handle(caplog):
+    from murineshiftwork.hardware.stimulation import Stimulation
+
+    class _FailingPulsePal:
+        def stop_all_outputs(self):
+            raise OSError("port closed")
+
+    stim = Stimulation(in_dict={})
+    stim.pulsepal = _FailingPulsePal()
+    stim._owns_connection = True
+    with caplog.at_level("WARNING"):
+        stim.disconnect()
+    assert "error during disconnect" in caplog.text
+    assert stim.pulsepal is None
