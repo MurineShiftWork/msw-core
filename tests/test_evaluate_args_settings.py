@@ -297,3 +297,16 @@ def test_subject_record_cameras_ignored_on_rig_without_video(
     assert "record_cameras" not in out["settings.task.patched"]
     assert "record_cameras" not in out["settings.task.provenance"]
     assert out["cameras_config"].unit_names == []
+
+
+def test_camera_failure_from_setup_and_run(run_evaluate, camera_setup):
+    camera_setup({})
+    _write_subject(run_evaluate.config_dir, "subj001")
+    out = run_evaluate(setup="rig1")
+    assert out["camera_failure"] == "raise"
+    assert out["run_context"].camera_failure == "raise"
+    out = run_evaluate(setup="rig1", camera_failure="continue")
+    assert out["camera_failure"] == "continue"
+    assert out["run_context"].camera_failure == "continue"
+    assert out["run_context"].to_task_kwargs()["camera_failure"] == "continue"
+    assert [g.name for g in out["camera_groups"]] == ["rce"]

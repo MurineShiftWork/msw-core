@@ -38,6 +38,7 @@ _EXPECTED_KEYS = {
     "calibration_file_liquid",
     "calibration_file_sound",
     "calibration_file_stage",
+    "camera_failure",
     "camera_groups",
     "cameras_config",
     "command",

@@ -165,6 +165,15 @@ def test_invalid_groups_are_refused(groups, match):
         setup(groups)
 
 
+def test_camera_failure_defaults_to_raise():
+    assert SetupConfig(name="rig").camera_failure == "raise"
+    assert SetupConfig(name="rig", camera_failure="continue").camera_failure == (
+        "continue"
+    )
+    with pytest.raises(ValidationError):
+        SetupConfig(name="rig", camera_failure="ignore")
+
+
 # --- real setups ---
 
 

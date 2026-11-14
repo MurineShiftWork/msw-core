@@ -31,7 +31,7 @@ from murineshiftwork.hardware.camera.records import (
     read_cameras_record,
 )
 from murineshiftwork.hardware.camera.session import CameraSession, CameraStartError
-from murineshiftwork.logic.config.models import CameraGroup, CameraUnit
+from murineshiftwork.logic.config.models import CameraGroup, CameraUnit, SetupConfig
 
 
 class FakeBackend:
@@ -439,6 +439,18 @@ def test_always_groups_start_without_video():
     ]
     session = CameraSession.from_run(_run(groups, False), record_video=True)
     assert len(session.groups) == 2
+
+
+def test_policy_comes_from_the_run_then_the_setup():
+    groups = [behaviour()]
+    setup = SetupConfig(name="rig", camera_failure="continue")
+    assert CameraSession.from_run(_run(groups, True)).policy == "raise"
+    assert (
+        CameraSession.from_run(_run(groups, True, setup_config=setup)).policy
+        == "continue"
+    )
+    run = _run(groups, True, setup_config=setup, camera_failure="raise")
+    assert CameraSession.from_run(run).policy == "raise"
 
 
 # --- records ---

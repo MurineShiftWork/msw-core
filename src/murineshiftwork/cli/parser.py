@@ -111,6 +111,17 @@ def _add_session_args(parser):
             "--host attach failure is a hard error."
         ),
     )
+    g.add_argument(
+        "--camera-failure",
+        dest="camera_failure",
+        choices=["raise", "continue"],
+        default="",
+        help=(
+            "What a camera failing at preflight or start does to this run: 'raise' "
+            "stops the cameras and aborts, 'continue' records the failure and runs "
+            "on. Default: the setup's camera_failure (raise when unset)."
+        ),
+    )
 
 
 def _add_config_args(parser):

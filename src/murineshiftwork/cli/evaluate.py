@@ -504,6 +504,14 @@ def _set_legacy_cameras_config(args_dict: dict) -> None:
     )
 
 
+def _resolve_camera_failure(args_dict: dict, setup_config) -> None:
+    """The run's camera failure policy: ``--camera-failure``, else the setup's."""
+    value = args_dict.get("camera_failure") or ""
+    args_dict["camera_failure"] = value or (
+        setup_config.camera_failure if setup_config is not None else "raise"
+    )
+
+
 def _resolve_record_cameras(args_dict: dict, patched: dict) -> None:
     """Narrow the run's camera groups to the cameras the task records.
 
@@ -696,6 +704,7 @@ def evaluate_args(args_dict=None):
 
     setup_config = args_dict.get("setup_config")
     _resolve_setup_config_ports(args_dict, setup_config, patched)
+    _resolve_camera_failure(args_dict, setup_config)
     _resolve_record_cameras(args_dict, patched)
     _resolve_host_session(args_dict)
     # Typed run context (spine refactor) is the single source for the resolved run: build it

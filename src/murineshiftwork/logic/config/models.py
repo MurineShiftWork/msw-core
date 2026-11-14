@@ -192,6 +192,7 @@ _LEGACY_CAMERA_SETTINGS = ("config", "driver", "bonsai_exe", "workflow", "n_came
 _GROUP_ONLY_KEYS = frozenset({"name", "units", "settings", "role", "record"})
 
 CameraRecordMode = Literal["with_video", "always"]
+CameraFailurePolicy = Literal["raise", "continue"]
 
 
 def _check_camera_name(kind: str, name: str) -> str:
@@ -337,6 +338,14 @@ class SetupConfig(BaseModel):
             "Camera groups of this rig, each driven by one camera backend plugin. The "
             "legacy single block (backend, driver, cameras: [{index, name}], config) "
             "loads as one group named after its backend."
+        ),
+    )
+    camera_failure: CameraFailurePolicy = Field(
+        default="raise",
+        description=(
+            "What a camera failing at preflight or start does to the run: 'raise' stops "
+            "the cameras and aborts, 'continue' records the failure and runs on. A run "
+            "can override it with --camera-failure."
         ),
     )
     calibrations: Calibrations = Calibrations()
