@@ -65,3 +65,33 @@ def test_multi_valve_uses_by_valve_and_provenance():
 def test_bad_amount_is_ignored():
     r = build_reward_metadata({"reward_type": "water", "reward_amount_ul": "n/a"})
     assert r == {"type": "water"}
+
+
+def test_provenance_matches_str_keyed_calibrations_for_int_valves():
+    from murineshiftwork.logic.config.models import ValveCalibration
+
+    cal = ValveCalibration(updated="2026-06-18", fit_model="linear")
+    r = build_reward_metadata(
+        {
+            "reward_amount_ul": 3.0,
+            "valve_s_for_ul": _s_for_ul,
+            "HARDWARE_VALVES_FOR_WATER": [1],
+        },
+        valve_calibrations={"1": cal},
+    )
+    assert r["calibration"] == {"date": "2026-06-18", "fit_model": "linear"}
+
+
+def test_valve_calibrations_wired_from_setup():
+    from types import SimpleNamespace
+
+    from murineshiftwork.logic.task_process import _valve_calibrations_of
+
+    cals = {"1": object()}
+    setup = SimpleNamespace(calibrations=SimpleNamespace(bpod_valve=cals))
+    assert _valve_calibrations_of({"run_context": SimpleNamespace(setup=setup)}) is cals
+    assert (
+        _valve_calibrations_of({"execution_config": SimpleNamespace(setup=setup)})
+        is cals
+    )
+    assert _valve_calibrations_of({}) is None
