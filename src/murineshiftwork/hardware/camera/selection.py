@@ -201,4 +201,4 @@ def select_cameras(
             f"cameras.workflow {cameras.workflow!r} records several cameras in one "
             "Bonsai process; choosing cameras needs a -1cam workflow"
         )
-    return cameras.model_copy(update={"selected": list(names)})
+    return cameras.with_selected(names)

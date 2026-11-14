@@ -131,7 +131,7 @@ def peers(monkeypatch):
 
 def test_rce_only_selected_agents_reach_the_conductor(fake_rce, ensemble, tmp_path):
     adapter = make_camera_client(
-        CameraConfig(backend="rce", config=str(ensemble), selected=["bottom"]),
+        CameraConfig(backend="rce", config=str(ensemble)).with_selected(["bottom"]),
         output_dir=str(tmp_path),
     )
     assert isinstance(adapter, RceConductorAdapter)
@@ -155,8 +155,7 @@ def test_flir_starts_runners_for_selected_units_only(fake_flir, tmp_path, peers)
     cfg = CameraConfig(
         backend="flir_bonsai",
         cameras=[CameraUnit(index=0, name="top"), CameraUnit(index=1, name="back")],
-        selected=["back"],
-    )
+    ).with_selected(["back"])
     client = FlirBonsaiClient(cfg, str(tmp_path))
     client.initialize_acquisition(acqdir=str(tmp_path / _FLIR), basename=_FLIR)
     client.start_recording()
@@ -169,8 +168,7 @@ def test_flir_refuses_selection_with_multi_camera_workflow(fake_flir, tmp_path):
         backend="flir_bonsai",
         workflow="run-flir-flycap-2cam",
         cameras=[CameraUnit(index=0, name="top")],
-        selected=["top"],
-    )
+    ).with_selected(["top"])
     with pytest.raises(RuntimeError, match="-1cam"):
         FlirBonsaiClient(cfg, str(tmp_path)).start_recording()
     assert fake_flir == []

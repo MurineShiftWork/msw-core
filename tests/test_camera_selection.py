@@ -272,3 +272,19 @@ def test_rce_names_are_stripped(tmp_path):
         "top",
         "left",
     ]
+
+
+def test_selected_cannot_come_from_a_setup_yaml(rce):
+    cameras = CameraConfig.model_validate(
+        {"backend": "rce", "config": rce.config, "selected": ["top"]}
+    )
+    assert cameras.selected is None
+    assert "selected" not in cameras.model_dump()
+
+
+def test_selection_survives_a_copy_and_pickling(rce):
+    import pickle
+
+    narrowed = select_cameras(rce, ["top"])
+    assert narrowed.model_copy(update={"config": "x.yaml"}).selected == ["top"]
+    assert pickle.loads(pickle.dumps(narrowed)).selected == ["top"]
