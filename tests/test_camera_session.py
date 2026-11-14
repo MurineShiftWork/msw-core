@@ -281,6 +281,21 @@ def test_raise_on_preflight_failure_names_the_cameras(session_paths):
         assert ("close",) in fake.calls and not any(c[0] == "start" for c in fake.calls)
 
 
+def test_preflight_reports_without_the_policy():
+    FakeBackend.fail = {"preflight": {"back": "serial 1810 not found"}}
+    cams = CameraSession([behaviour(), pupil()], policy="raise")
+    failures = cams.preflight()
+    assert [(g, r.name) for g, r in failures] == [("behaviour", "back")]
+    units = {u.name: u for g in cams.record().groups for u in g.units}
+    assert (units["back"].ok, units["back"].state) == (False, "missing")
+    assert (units["top"].ok, units["eye"].ok) == (True, True)
+    with pytest.raises(CameraStartError):
+        cams.open()  # the policy still applies to a later open
+    assert sum(c == ("preflight",) for f in FakeBackend.instances for c in f.calls) == 2
+    for fake in FakeBackend.instances:
+        assert fake.calls[-1] == ("close",)
+
+
 def test_raise_on_start_failure_stops_what_started(session_paths):
     FakeBackend.fail = {"start": {"eye": "no frames"}}
     cams = CameraSession([behaviour(), pupil()])

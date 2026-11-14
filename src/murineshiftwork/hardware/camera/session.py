@@ -198,6 +198,8 @@ class CameraSession:
         self._load = backend_loader
         self._runs = [_GroupRun(group=g, specs=unit_specs(g)) for g in groups]
         self._opened = False
+        self._preflight_failures: list[tuple[str, UnitResult]] = []
+        self._policy_applied = False  # open applied the policy to the preflight
         self._stopping = False  # stop was called: start nothing more
         self._closed = False  # every group stopped and closed
         self._host_folder: str = ""
@@ -256,8 +258,29 @@ class CameraSession:
             CameraConfigError: A backend is missing or rejects its settings.
             CameraStartError: A camera failed preflight under the ``raise`` policy.
         """
-        if self._opened or not self._runs:
+        if self._policy_applied or not self._runs:
             return
+        failures = self.preflight()
+        self._policy_applied = True
+        self._enforce("preflight", failures)
+
+    def preflight(self) -> list[tuple[str, UnitResult]]:
+        """Load and configure every backend, then preflight every camera, without
+        applying the failure policy.
+
+        ``record()`` then holds every camera's preflight state. Nothing records;
+        ``stop`` closes the backends. A second call (or ``open`` after this one)
+        reuses the first call's results without touching a camera.
+
+        Returns:
+            ``(group, result)`` for every camera not ok at preflight.
+
+        Raises:
+            CameraConfigError: A backend is missing or rejects its settings (the
+                backends are closed first).
+        """
+        if self._opened or not self._runs:
+            return list(self._preflight_failures)
         self._opened = True
         try:
             for run in self._runs:
@@ -273,7 +296,8 @@ class CameraSession:
         except BaseException:
             self.stop("camera preflight failed")
             raise
-        self._enforce("preflight", failures)
+        self._preflight_failures = failures
+        return list(failures)
 
     def start(self, session_paths: dict[str, Any]) -> None:
         """Start every group into its own camera acquisition next to the behaviour one.
