@@ -53,9 +53,27 @@ def test_legacy_flir_shorthand_keeps_n_cameras_in_settings():
     assert g.units == [] and g.settings == {"n_cameras": 2}
 
 
-def test_legacy_unnamed_flir_cameras_are_named_by_index():
+def test_legacy_unnamed_flir_cameras_become_default_cameras():
+    """The backend's default cameras keep the old ``cam<index>`` file names."""
+    cameras = [{"index": 0}, {"index": 1}]
+    [g] = setup({"backend": "flir_bonsai", "n_cameras": 5, "cameras": cameras}).cameras
+    assert g.units == [] and g.settings == {"n_cameras": 2}
+
+
+def test_legacy_unnamed_flir_cameras_off_the_default_indices_are_named():
     [g] = setup({"backend": "flir_bonsai", "cameras": [{"index": 3}]}).cameras
     assert g.unit_names == ["cam3"]
+    [g] = setup(
+        {"backend": "flir_bonsai", "cameras": [{"index": 0}, {"index": 1, "name": "b"}]}
+    ).cameras
+    assert g.unit_names == ["cam0", "b"]
+
+
+def test_legacy_unnamed_rce_cameras_are_dropped():
+    [g] = setup(
+        {"backend": "rce", "config": "x.yaml", "cameras": [{"index": 0}]}
+    ).cameras
+    assert g.units == []
 
 
 def test_legacy_rce_block_moves_config_to_settings():

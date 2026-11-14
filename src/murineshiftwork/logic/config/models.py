@@ -283,7 +283,13 @@ def legacy_camera_group(block: dict[str, Any]) -> dict[str, Any]:
 
     The group is named after the backend (``rce`` when unset, the old default). The
     flat backend keys move into ``settings`` and the FLIR ``cameras: [{index, name}]``
-    list becomes ``units``; an unnamed FLIR camera is named ``cam<index>``.
+    list becomes ``units``.
+
+    Unnamed cameras keep their old file names: a FLIR list of only unnamed cameras
+    at indices ``0..n-1`` becomes ``n_cameras: n`` with no units, the backend's
+    default cameras whose files are labelled ``cam<index>``; an unnamed RCE list,
+    which never selected anything, is dropped. Any other unnamed camera is named
+    ``cam<index>`` (its files are then labelled ``cam<index>.<index>``).
     """
     backend = str(block.get("backend") or "rce")
     unknown = sorted(
@@ -292,9 +298,16 @@ def legacy_camera_group(block: dict[str, Any]) -> dict[str, Any]:
     if unknown:
         raise ValueError(f"cameras: unknown keys {unknown}")
     settings = {k: block[k] for k in _LEGACY_CAMERA_SETTINGS if k in block}
+    cameras = [dict(cam or {}) for cam in block.get("cameras") or []]
+    if cameras and not any(cam.get("name") for cam in cameras):
+        indices = [cam.get("index", i) for i, cam in enumerate(cameras)]
+        if backend == "rce":
+            cameras = []
+        elif backend == "flir_bonsai" and indices == list(range(len(cameras))):
+            settings["n_cameras"] = len(cameras)
+            cameras = []
     units = []
-    for i, cam in enumerate(block.get("cameras") or []):
-        cam = dict(cam or {})
+    for i, cam in enumerate(cameras):
         if not cam.get("name"):
             cam["name"] = f"cam{cam.get('index', i)}"
         units.append(cam)
