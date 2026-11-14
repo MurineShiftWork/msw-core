@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from murineshiftwork.cli.evaluate import _inject_valve_calibration
+from murineshiftwork.logic.calibration import valve_fitting
 from murineshiftwork.logic.config.models import (
     Calibrations,
     SetupConfig,
@@ -48,7 +49,7 @@ def test_calibrations_default_fit_model_is_exponential():
 
 def test_linear_fit_recovers_slope_and_intercept():
     vc = ValveCalibration(points=_LINEAR_POINTS, fit_model="linear")
-    a, b = vc._fit()
+    a, b = valve_fitting.fit(vc.points, vc.fit_model)
     assert a == pytest.approx(_LINEAR_SLOPE, rel=1e-6)
     assert b == pytest.approx(_LINEAR_INTERCEPT, abs=1e-6)
 

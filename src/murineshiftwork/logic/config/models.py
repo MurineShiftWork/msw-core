@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import logging
 import re
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from scipy.optimize import curve_fit as _scipy_curve_fit
 
 # Bare Linux serial device names (no /dev/ prefix) accepted in the `port` field.
 _BARE_TTY_RE = re.compile(r"tty(ACM|USB|S)\d+")
@@ -107,16 +104,6 @@ DeviceUnion = Annotated[
 # Calibrations
 
 
-def _exp_model(x: np.ndarray, a: float, b: float, c: float) -> np.ndarray:
-    """a * exp(b * x) + c : the exponential valve volume-vs-time model."""
-    return a * np.exp(b * x) + c
-
-
-def _linear_model(x: np.ndarray, a: float, b: float) -> np.ndarray:
-    """a * x + b : the linear valve volume-vs-time model."""
-    return a * x + b
-
-
 # Fit-model selector shared by Calibrations and ValveCalibration.
 FitModel = Literal["exponential", "linear"]
 
@@ -139,186 +126,24 @@ class ValveCalibration(BaseModel):
     points: list[list[float]] = []
     fit_model: FitModel = "exponential"
 
-    # ------------------------------------------------------------------ #
-    # Fitting
-
-    def _clean_points(self) -> tuple[np.ndarray, np.ndarray]:
-        """Return (open_s, ul) arrays sorted by time with dead-zone points dropped.
-
-        Points with volume <= 0 uL are removed before fitting so they do not
-        corrupt the initial-guess calculation or pull the optimizer.
-        """
-        pts = sorted(self.points, key=lambda p: p[0])
-        s = np.array([p[0] for p in pts], dtype=float)
-        ul = np.array([p[1] for p in pts], dtype=float)
-        mask = ul > 0
-        return s[mask], ul[mask]
-
-    def _fit(self) -> tuple[float, ...]:
-        """Fit the selected model to stored points.
-
-        Returns (a, b, c) for the exponential model or (a, b) for the linear
-        model. At least 3 positive-volume points are required after filtering
-        dead-zone measurements.
-        """
-        s, ul = self._clean_points()
-
-        if len(s) < 3:
-            raise ValueError(
-                f"Too few positive-volume calibration points ({len(s)}) after "
-                "filtering dead-zone measurements: need at least 3."
-            )
-
-        if self.fit_model == "linear":
-            return self._fit_linear(s, ul)
-        return self._fit_exponential(s, ul)
-
-    @staticmethod
-    def _fit_exponential(s: np.ndarray, ul: np.ndarray) -> tuple[float, float, float]:
-        """Fit a * exp(b * x) + c. Returns (a, b, c).
-
-        Initial guesses are derived from the data so curve_fit converges reliably
-        even with sparse calibration sets.
-        """
-        ul_min, ul_max = float(ul.min()), float(ul.max())
-        s_span = float(s.max() - s.min())
-        b0 = np.log(ul_max / ul_min) / s_span if s_span > 0 and ul_min > 0 else 5.0
-        a0 = ul_min
-        c0 = 0.0
-
-        try:
-            popt, _ = _scipy_curve_fit(
-                _exp_model,
-                s,
-                ul,
-                p0=[a0, b0, c0],
-                bounds=([0.0, 0.0, -np.inf], [np.inf, np.inf, np.inf]),
-                maxfev=10_000,
-            )
-            return float(popt[0]), float(popt[1]), float(popt[2])
-        except RuntimeError as exc:
-            raise ValueError(
-                f"Exponential fit failed: check calibration points for valve.\n{exc}"
-            ) from exc
-
-    @staticmethod
-    def _fit_linear(s: np.ndarray, ul: np.ndarray) -> tuple[float, float]:
-        """Fit a * x + b via least squares. Returns (a, b)."""
-        a, b = np.polyfit(s, ul, 1)
-        return float(a), float(b)
-
-    def _predict(self, s: np.ndarray) -> np.ndarray:
-        """Evaluate the fitted model at the given open-time array."""
-        params = self._fit()
-        if self.fit_model == "linear":
-            return _linear_model(s, *params)
-        return _exp_model(s, *params)
-
-    def _calibrated_range_ul(self) -> tuple[float, float]:
-        """Return (min_ul, max_ul) of the calibrated volume range."""
-        pts = sorted(self.points, key=lambda p: p[0])
-        ul_endpoints = self._predict(np.array([pts[0][0], pts[-1][0]]))
-        return float(ul_endpoints[0]), float(ul_endpoints[-1])
+    # Curve fitting lives in logic.calibration.valve_fitting; imported lazily so
+    # loading the config models does not pull in scipy.
 
     def ul_for_s(self, open_s: float) -> float:
-        pts = sorted(self.points, key=lambda p: p[0])
-        s_min, s_max = pts[0][0], pts[-1][0]
-        if open_s < s_min or open_s > s_max:
-            logging.warning(
-                "ValveCalibration.ul_for_s: open_s=%.4f s is outside calibrated "
-                "range [%.4f, %.4f] s: extrapolating",
-                open_s,
-                s_min,
-                s_max,
-            )
-        return float(self._predict(np.array([open_s]))[0])
+        from murineshiftwork.logic.calibration import valve_fitting
+
+        return valve_fitting.ul_for_s(self.points, self.fit_model, open_s)
 
     def s_for_ul(self, volume_ul: float) -> float:
-        """Invert the fitted model numerically via dense sampling.
+        from murineshiftwork.logic.calibration import valve_fitting
 
-        Sampling is used rather than an analytical inverse because the analytical
-        forms are numerically fragile near degenerate parameters and the same
-        code path then works for both the exponential and linear models.
-
-        The sample grid extends 50% beyond the calibrated time range so that
-        requests outside the calibrated volume range extrapolate via the fit
-        model rather than clamping silently at the boundary.
-        """
-        pts = sorted(self.points, key=lambda p: p[0])
-        s_min, s_max = pts[0][0], pts[-1][0]
-        margin = (s_max - s_min) * 0.5
-        s_dense = np.linspace(max(0.0, s_min - margin), s_max + margin, 4000)
-        ul_dense = self._predict(s_dense)
-        ul_lo, ul_hi = float(ul_dense.min()), float(ul_dense.max())
-        if volume_ul < ul_lo or volume_ul > ul_hi:
-            logging.warning(
-                "ValveCalibration.s_for_ul: %.3f uL is outside calibrated "
-                "range [%.3f, %.3f] uL: extrapolating",
-                volume_ul,
-                ul_lo,
-                ul_hi,
-            )
-        return float(np.interp(volume_ul, ul_dense, s_dense))
+        return valve_fitting.s_for_ul(self.points, self.fit_model, volume_ul)
 
     def check_quality(self, r2_threshold: float = 0.95) -> tuple[bool, str]:
-        """Return (is_valid, reason).
+        """Return (is_valid, reason); see ``valve_fitting.check_quality``."""
+        from murineshiftwork.logic.calibration import valve_fitting
 
-        Checks:
-        - At least 3 calibration points
-        - All volumes positive
-        - Volume monotonically increases with open time
-        - Fit R-squared >= r2_threshold
-        - Slope is positive (exponential: b > 0; linear: a > 0)
-        """
-        s, ul = self._clean_points()
-
-        if len(s) < 3:
-            return (
-                False,
-                f"only {len(s)} positive-volume point(s): need at least 3",
-            )
-
-        if np.any(np.diff(ul) <= 0):
-            bad = int(np.argmax(np.diff(ul) <= 0)) + 1
-            return (
-                False,
-                f"volume not monotonically increasing: point {bad} breaks order",
-            )
-
-        try:
-            params = self._fit()
-        except ValueError as exc:
-            return False, str(exc)
-
-        if self.fit_model == "linear":
-            slope = params[0]
-            if slope <= 0:
-                return (
-                    False,
-                    f"fit slope a = {slope:.4f} <= 0 (curve is not increasing)",
-                )
-        else:
-            b = params[1]
-            if b <= 0:
-                return (
-                    False,
-                    f"fit parameter b = {b:.4f} <= 0 (curve is not exponential growth)",
-                )
-
-        ul_pred = self._predict(s)
-        ss_res = float(np.sum((ul - ul_pred) ** 2))
-        ss_tot = float(np.sum((ul - ul.mean()) ** 2))
-        r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
-        if r2 < r2_threshold:
-            return (
-                False,
-                f"R-squared = {r2:.3f} < {r2_threshold} (poor {self.fit_model} fit)",
-            )
-
-        params_str = ", ".join(
-            f"{name}={val:.5f}" for name, val in zip("abc", params, strict=False)
-        )
-        return True, f"ok ({self.fit_model}, R-squared = {r2:.3f}, {params_str})"
+        return valve_fitting.check_quality(self.points, self.fit_model, r2_threshold)
 
 
 class Calibrations(BaseModel):
