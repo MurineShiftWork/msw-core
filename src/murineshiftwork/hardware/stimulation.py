@@ -478,8 +478,8 @@ class Stimulation:
                         row1="PulsePal",
                         row2=f"fw{fw}" if fw else "Ready",
                     )
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001 - teardown must finish and clear the handle
+                logging.warning("PulsePal: error during disconnect: %s", exc)
             if getattr(self, "_owns_connection", True):
                 self.pulsepal = None
         logging.info("PulsePal: disconnected.")
