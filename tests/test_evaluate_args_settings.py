@@ -240,3 +240,45 @@ def test_unknown_record_camera_from_setup_refuses_the_run(run_evaluate, camera_s
     _write_subject(run_evaluate.config_dir, "subj001")
     with pytest.raises(ValueError, match="unknown camera"):
         run_evaluate(setup="rig1")
+
+
+@pytest.mark.parametrize(
+    "value, recorded, selected",
+    [(["top"], ["top"], ["top"]), ("all", ["top", "left", "bottom"], None)],
+)
+def test_record_cameras_with_relative_camera_config(
+    run_evaluate, value, recorded, selected
+):
+    """A relative ``cameras.config`` is resolved against the config dir before the
+    names are checked, and the task gets the resolved path."""
+    config_dir = run_evaluate.config_dir
+    ensemble = config_dir / "cameras" / "rig.yaml"
+    ensemble.parent.mkdir(parents=True)
+    ensemble.write_text(
+        yaml.safe_dump(
+            {
+                "agents": {
+                    f"agent-{i}": {"camera_config": {"description": name}}
+                    for i, name in enumerate(["top", "left", "bottom"])
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    setup = config_dir / "setups" / "rig1.yaml"
+    setup.parent.mkdir(parents=True)
+    setup.write_text(
+        yaml.safe_dump(
+            {
+                "name": "rig1",
+                "cameras": {"backend": "rce", "config": "cameras/rig.yaml"},
+                "task_overrides": {"_test_flush_valves": {"record_cameras": value}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_subject(config_dir, "subj001")
+    out = run_evaluate(setup="rig1")
+    assert out["settings.task.patched"]["record_cameras"] == recorded
+    assert out["cameras_config"].config == str(ensemble)
+    assert out["cameras_config"].selected == selected

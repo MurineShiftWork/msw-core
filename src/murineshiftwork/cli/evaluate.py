@@ -484,9 +484,10 @@ def _resolve_record_cameras(args_dict: dict, patched: dict) -> None:
     value = patched.get(RECORD_CAMERAS_KEY)
     if value is None:
         return
-    setup_config = args_dict.get("setup_config")
+    # the copy whose ``config`` path is resolved against the config dir, not the raw
+    # (possibly relative) path of the setup YAML
     narrowed, recorded = resolve_record_cameras(
-        setup_config.cameras if setup_config else None,
+        args_dict.get("cameras_config"),
         value,
         args_dict.get("config_file_camera", ""),
     )
