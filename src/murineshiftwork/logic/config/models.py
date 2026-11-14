@@ -4,7 +4,14 @@ import re
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    field_validator,
+    model_validator,
+)
 
 # Bare Linux serial device names (no /dev/ prefix) accepted in the `port` field.
 _BARE_TTY_RE = re.compile(r"tty(ACM|USB|S)\d+")
@@ -187,6 +194,29 @@ class CameraConfig(BaseModel):
     workflow: str = ""  # workflow stem; auto-derived as run-flir-{driver}-1cam if empty
     cameras: list[CameraUnit] = []  # preferred; one entry per camera
     n_cameras: int = 1  # flat shorthand when cameras list is empty
+    # Names of the cameras to record, from the task setting record_cameras. Private
+    # so a setup YAML cannot set it: only the framework's narrowing sets it, on the
+    # copy handed to a task (see with_selected). None records all cameras.
+    _selected: list[str] | None = PrivateAttr(default=None)
+
+    @property
+    def selected(self) -> list[str] | None:
+        """Names of the cameras to record, or None to record all of them."""
+        return self._selected
+
+    def with_selected(self, names: list[str]) -> CameraConfig:
+        """Return a copy that records only the cameras ``names``."""
+        narrowed = self.model_copy()
+        narrowed._selected = list(names)
+        return narrowed
+
+    @model_validator(mode="after")
+    def _check_names(self) -> CameraConfig:
+        names = [c.name for c in self.cameras if c.name]
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        if dupes:
+            raise ValueError(f"cameras: duplicate camera names {dupes}")
+        return self
 
 
 # ---------------------------------------------------------------------------
