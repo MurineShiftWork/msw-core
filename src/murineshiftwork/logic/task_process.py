@@ -61,6 +61,14 @@ def _resolve_hook_setup(run_context, execution_config):
     return None
 
 
+def _valve_calibrations_of(input_kwargs: dict) -> dict | None:
+    """The setup's ``{port: ValveCalibration}`` for reward provenance, or None if no setup."""
+    setup = _resolve_hook_setup(
+        input_kwargs.get("run_context"), input_kwargs.get("execution_config")
+    )
+    return getattr(getattr(setup, "calibrations", None), "bpod_valve", None)
+
+
 def _resolve_run_identifiers(input_kwargs: dict) -> tuple:
     """``(debug, session_type, acq_type, session_version)`` from the RunContext, else the kwargs.
 
@@ -432,7 +440,9 @@ class TaskProcess:
         _scoring_metric = _scoring_metric_of(_ts)
         if _scoring_metric:
             acq_metadata["task"]["scoring_metric"] = _scoring_metric
-        reward_md = build_reward_metadata(_ts)
+        reward_md = build_reward_metadata(
+            _ts, _valve_calibrations_of(self.input_kwargs)
+        )
         if reward_md:
             acq_metadata["reward"] = reward_md
         init_acquisition_manifest(

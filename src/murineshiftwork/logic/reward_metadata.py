@@ -75,9 +75,15 @@ def build_reward_metadata(
 
 
 def _calibration_provenance(valve_calibrations, valve) -> dict[str, Any] | None:
-    if not valve_calibrations or valve not in valve_calibrations:
+    if not valve_calibrations:
         return None
-    cal = valve_calibrations[valve]
+    # Setup calibrations are keyed by str(port); task settings may list ports as ints.
+    if valve in valve_calibrations:
+        cal = valve_calibrations[valve]
+    elif str(valve) in valve_calibrations:
+        cal = valve_calibrations[str(valve)]
+    else:
+        return None
     updated = getattr(cal, "updated", None)
     fit_model = getattr(cal, "fit_model", None)
     if isinstance(cal, dict):
