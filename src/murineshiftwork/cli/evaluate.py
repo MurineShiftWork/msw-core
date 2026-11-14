@@ -363,6 +363,14 @@ def _inject_valve_calibration(setup_config, patched) -> None:
     logging.debug("Injected valve_s_for_ul from SetupConfig into task settings")
 
 
+def _resolve_against_config_dir(path: str, config_dir: str) -> str:
+    """Resolve a setup-YAML file path: relative paths are relative to ``config_dir``,
+    absolute paths (and any path when there is no config dir) are returned unchanged."""
+    if not path or not config_dir or Path(path).expanduser().is_absolute():
+        return path
+    return str(Path(config_dir) / path)
+
+
 def _apply_device_port(
     setup_config, args_dict, patched, device: str, *, set_patched: bool
 ) -> ValueError | None:
@@ -442,14 +450,18 @@ def _resolve_setup_config_ports(args_dict, setup_config, patched):
         patched.pop("serial_port_pulsepal", None)
 
     if setup_config and setup_config.cameras:
-        cam_path = setup_config.cameras.config
+        cam_path = _resolve_against_config_dir(
+            setup_config.cameras.config, args_dict.get("config_dir", "")
+        )
         if cam_path and (
             not args_dict.get("config_file_camera")
             or not Path(args_dict.get("config_file_camera", "")).exists()
         ):
             args_dict["config_file_camera"] = cam_path
             logging.debug(f"Resolved camera config from SetupConfig: {cam_path}")
-        args_dict["cameras_config"] = setup_config.cameras
+        args_dict["cameras_config"] = setup_config.cameras.model_copy(
+            update={"config": cam_path}
+        )
 
     if setup_config:
         _inject_valve_calibration(setup_config, patched)
