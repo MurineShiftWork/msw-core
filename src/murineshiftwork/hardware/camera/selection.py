@@ -8,16 +8,18 @@ cannot be chosen.
 
 - unset: every camera of every video group records;
 - ``all``: the same, with the camera names written to the session settings;
-- a list of camera names: a unit name, or for an RCE group without units, the
-  agent's ``camera_config.description`` in the ensemble YAML.
+- a list of values, each one of:
 
-Names are given as a YAML list (``[top, bottom]``) or a comma-separated string.
-Names containing ``:`` are refused: the ``group:`` and ``role:`` prefixes are
-reserved for choosing cameras by group or role. A video group none of whose
-cameras is chosen does not start.
+  - a camera name (a unit name, or for an RCE group without units, the agent's
+    ``camera_config.description`` in the ensemble YAML);
+  - ``group:<name>``: every camera of that group;
+  - ``role:<role>``: every camera of the video groups with that role.
+
+Values are given as a YAML list (``[top, group:side]``) or a comma-separated string.
+A video group none of whose cameras is chosen does not start.
 
 The choice is resolved and checked once, before any hardware starts: an unknown
-name, an empty list or a setup whose cameras cannot be named refuses
+name, group or role, an empty list or a setup whose cameras cannot be named refuses
 the run. Reading the RCE ensemble YAML here is plain YAML: no backend import.
 """
 
@@ -37,6 +39,8 @@ log = logging.getLogger(__name__)
 RECORD_CAMERAS_KEY = "record_cameras"
 #: ``record_cameras`` value meaning every camera of the video groups
 RECORD_ALL = "all"
+GROUP_PREFIX = "group:"
+ROLE_PREFIX = "role:"
 
 
 class CameraSelectionError(ValueError):
@@ -44,14 +48,14 @@ class CameraSelectionError(ValueError):
 
 
 def parse_record_cameras(value: Any) -> list[str] | str:
-    """Normalise a ``record_cameras`` value to a list of names, or ``"all"``.
+    """Normalise a ``record_cameras`` value to a list of values, or ``"all"``.
 
-    Accepts ``all``, a list of camera names or a string as given on the command
-    line (``top``, ``top,bottom`` or ``[top, bottom]``).
+    Accepts ``all``, a list or a string as given on the command line (``top``,
+    ``top,group:side`` or ``[top, role:eye]``).
 
     Raises:
-        CameraSelectionError: If the value is empty, not strings, or a name
-            contains ``:``.
+        CameraSelectionError: If the value is empty, not strings, or has a prefix
+            other than ``group:`` and ``role:``.
     """
     if isinstance(value, str) and value.strip() == RECORD_ALL:
         return RECORD_ALL
@@ -76,12 +80,16 @@ def parse_record_cameras(value: Any) -> list[str] | str:
             f"{RECORD_CAMERAS_KEY} is empty; to record no video, set the task "
             "setting record_video: false"
         )
-    prefixed = [n for n in names if ":" in n]
-    if prefixed:
-        raise CameraSelectionError(
-            f"{RECORD_CAMERAS_KEY} {prefixed}: selection by group or role is not "
-            "supported yet; list camera names"
-        )
+    for n in names:
+        if ":" not in n:
+            continue
+        if not n.startswith((GROUP_PREFIX, ROLE_PREFIX)):
+            raise CameraSelectionError(
+                f"{RECORD_CAMERAS_KEY} {n!r}: a prefix is {GROUP_PREFIX!r} or "
+                f"{ROLE_PREFIX!r}"
+            )
+        if not n.split(":", 1)[1].strip():
+            raise CameraSelectionError(f"{RECORD_CAMERAS_KEY} {n!r} names nothing")
     return list(dict.fromkeys(names))
 
 
@@ -187,8 +195,8 @@ def resolve_record_cameras(
 
     Raises:
         CameraSelectionError: If the setup has no video cameras, the value is
-            empty or not names, or names an unknown camera or one of a group
-            that records always.
+            empty or malformed, or names an unknown camera, group or role, or a
+            group that records always.
     """
     video = [g for g in groups if g.record == "with_video"]
     if not video:
@@ -217,21 +225,54 @@ def resolve_record_cameras(
             names_of[g.name] = camera_names(g)
         except CameraSelectionError as exc:
             naming_errors.append(exc)
-    chosen: dict[str, list[str]] = {}
+    # group name -> chosen camera names, or None for the whole group
+    chosen: dict[str, list[str] | None] = {}
+    recorded: list[str] = []
+
+    def choose_whole(g: CameraGroup) -> None:
+        chosen[g.name] = None
+        recorded.extend(names_of.get(g.name) or [f"{GROUP_PREFIX}{g.name}"])
+
     for v in values:
-        owner = next((g for g in video if v in names_of.get(g.name, [])), None)
-        if owner is None:
-            if any(v in g.unit_names for g in always.values()):
+        if v.startswith(GROUP_PREFIX):
+            gname = v[len(GROUP_PREFIX) :].strip()
+            if gname in always:
                 raise CameraSelectionError(
-                    f"{RECORD_CAMERAS_KEY} {v!r}: the camera's group records always"
+                    f"{RECORD_CAMERAS_KEY} {v!r}: group {gname!r} records always"
                 )
-            if naming_errors:
-                raise naming_errors[0]
-            known = [n for names in names_of.values() for n in names]
-            raise CameraSelectionError(
-                f"unknown camera name(s) [{v!r}]; this setup has {known}"
-            )
-        chosen.setdefault(owner.name, []).append(v)
+            match = [g for g in video if g.name == gname]
+            if not match:
+                raise CameraSelectionError(
+                    f"{RECORD_CAMERAS_KEY} {v!r}: unknown camera group; video groups "
+                    f"are {[g.name for g in video]}"
+                )
+            choose_whole(match[0])
+        elif v.startswith(ROLE_PREFIX):
+            role = v[len(ROLE_PREFIX) :].strip()
+            match = [g for g in video if g.role == role]
+            if not match:
+                raise CameraSelectionError(
+                    f"{RECORD_CAMERAS_KEY} {v!r}: no video group has role {role!r}"
+                )
+            for g in match:
+                choose_whole(g)
+        else:
+            owner = next((g for g in video if v in names_of.get(g.name, [])), None)
+            if owner is None:
+                if any(v in g.unit_names for g in always.values()):
+                    raise CameraSelectionError(
+                        f"{RECORD_CAMERAS_KEY} {v!r}: the camera's group records always"
+                    )
+                if naming_errors:
+                    raise naming_errors[0]
+                known = [n for names in names_of.values() for n in names]
+                raise CameraSelectionError(
+                    f"unknown camera name(s) [{v!r}]; this setup has {known}"
+                )
+            picked = chosen.setdefault(owner.name, [])
+            if picked is not None:
+                picked.append(v)
+            recorded.append(v)
 
     narrowed: list[CameraGroup] = []
     for g in groups:
@@ -240,5 +281,6 @@ def resolve_record_cameras(
             continue
         if g.name not in chosen:
             continue
-        narrowed.append(select_units(g, chosen[g.name]))
-    return narrowed, list(values)
+        picked = chosen[g.name]
+        narrowed.append(g if picked is None else select_units(g, picked))
+    return narrowed, list(dict.fromkeys(recorded))

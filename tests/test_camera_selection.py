@@ -70,6 +70,8 @@ def pupil(record="always") -> CameraGroup:
         ("top,bottom", ["top", "bottom"]),
         ("[top, 'bottom']", ["top", "bottom"]),
         (["top", "top", "left"], ["top", "left"]),
+        ("top,group:side", ["top", "group:side"]),
+        (["role:eye"], ["role:eye"]),
     ],
 )
 def test_parse_record_cameras(value, expected):
@@ -90,6 +92,18 @@ def test_empty_record_cameras_is_an_error(value):
 @pytest.mark.parametrize("value", [3, [1, 2], {"top": True}])
 def test_record_cameras_must_be_names(value):
     with pytest.raises(CameraSelectionError, match="camera names"):
+        parse_record_cameras(value)
+
+
+@pytest.mark.parametrize("value", ["a:b", ["unit:top"]])
+def test_unknown_prefix_is_refused(value):
+    with pytest.raises(CameraSelectionError, match="prefix"):
+        parse_record_cameras(value)
+
+
+@pytest.mark.parametrize("value", ["group:", "role: "])
+def test_empty_prefix_is_refused(value):
+    with pytest.raises(CameraSelectionError, match="names nothing"):
         parse_record_cameras(value)
 
 
@@ -188,6 +202,25 @@ def test_unchosen_video_group_does_not_start(rce):
     assert recorded == ["top"]
 
 
+def test_group_prefix_keeps_the_whole_group(rce):
+    narrowed, recorded = resolve_record_cameras([flir(), rce], "group:rce")
+    assert narrowed == [rce]
+    assert recorded == ["top", "left", "bottom"]
+
+
+def test_group_prefix_on_unnamed_group_records_the_token():
+    shorthand = CameraGroup(name="flir_bonsai", backend="flir_bonsai")
+    narrowed, recorded = resolve_record_cameras([shorthand], "group:flir_bonsai")
+    assert narrowed == [shorthand]
+    assert recorded == ["group:flir_bonsai"]
+
+
+def test_role_prefix_picks_groups_by_role(rce):
+    narrowed, recorded = resolve_record_cameras([flir(), rce], "role:body")
+    assert [g.name for g in narrowed] == ["behaviour"]
+    assert recorded == ["top", "back"]
+
+
 def test_always_groups_are_kept_and_cannot_be_chosen(rce):
     groups = [flir(), pupil()]
     narrowed, recorded = resolve_record_cameras(groups, "back")
@@ -196,15 +229,24 @@ def test_always_groups_are_kept_and_cannot_be_chosen(rce):
         ("pupil", ["eye"]),
     ]
     assert recorded == ["back"]
-    with pytest.raises(CameraSelectionError, match="records always"):
-        resolve_record_cameras(groups, "eye")
+    for value in ("eye", "group:pupil"):
+        with pytest.raises(CameraSelectionError, match="records always"):
+            resolve_record_cameras(groups, value)
+    with pytest.raises(CameraSelectionError, match="no video group has role"):
+        resolve_record_cameras(groups, "role:eye")
 
 
-def test_unknown_names_are_refused(rce):
-    with pytest.raises(
-        CameraSelectionError, match=r"unknown camera name\(s\) \['front'\]"
-    ):
-        resolve_record_cameras([flir(), rce], "front")
+@pytest.mark.parametrize(
+    "value, match",
+    [
+        ("group:nope", "unknown camera group"),
+        ("role:nope", "no video group has role"),
+        ("front", r"unknown camera name\(s\) \['front'\]"),
+    ],
+)
+def test_unknown_values_are_refused(rce, value, match):
+    with pytest.raises(CameraSelectionError, match=match):
+        resolve_record_cameras([flir(), rce], value)
 
 
 def test_all_records_every_video_camera_without_narrowing(rce):
@@ -321,11 +363,3 @@ def test_evaluate_ignores_record_cameras_without_video_or_cameras():
     }
     _resolve_record_cameras(args, patched)
     assert "record_cameras" not in patched
-
-
-@pytest.mark.parametrize(
-    "value", ["group:overhead", ["role:face"], "top,group:side", "a:b"]
-)
-def test_prefixed_values_are_reserved(value):
-    with pytest.raises(CameraSelectionError, match="group or role is not supported"):
-        parse_record_cameras(value)
