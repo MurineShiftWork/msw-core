@@ -176,6 +176,15 @@ class CameraUnit(BaseModel):
 
     index: int  # SDK enumeration index; run `msw flir list-cameras` to resolve
     name: str = ""  # human label, e.g. "top" or "front"; used in artifact filenames
+    # Camera serial number (`msw flir probe-cameras`). When set, the camera is
+    # found by serial before Bonsai starts and `index` is only a fallback.
+    serial: str = ""
+
+    @field_validator("serial", mode="before")
+    @classmethod
+    def _serial_as_str(cls, v: Any) -> Any:
+        # an unquoted YAML serial loads as int, which pydantic v2 rejects for str
+        return str(v) if isinstance(v, int) and not isinstance(v, bool) else v
 
 
 class CameraConfig(BaseModel):

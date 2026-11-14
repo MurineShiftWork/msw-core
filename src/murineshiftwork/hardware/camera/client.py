@@ -164,6 +164,36 @@ class RceConductorAdapter:
 # FLIR/Bonsai client
 
 
+def _plan_flir_cameras(cameras: list[Any], driver: str) -> list[Any] | None:
+    """Match the configured FLIR cameras to the connected ones by serial.
+
+    Probes the connected cameras (``msw_flir_bonsai.probe``, a child process
+    with a timeout) and returns one launch entry (``index``, ``serial``) per
+    configured camera, in order. Returns None when the installed
+    msw-flir-bonsai has no probe: cameras then launch by configured index.
+    Artifact names keep the configured index either way.
+
+    Raises:
+        RuntimeError: The connected cameras do not match the setup (a
+            configured serial is not connected, or too few cameras).
+    """
+    try:
+        from msw_flir_bonsai.probe import probe_cameras, resolve_camera_units
+    except (ImportError, AttributeError):
+        log.info("FlirBonsaiClient: msw-flir-bonsai has no camera probe")
+        return None
+    probe = probe_cameras(driver)
+    log.info(
+        f"FlirBonsaiClient: probe {driver} source={probe.source} count={probe.count} "
+        f"serials={[c.serial for c in probe.cameras]}"
+    )
+    try:
+        return list(resolve_camera_units(cameras, driver, probe))
+    except RuntimeError as e:
+        log.error(f"FlirBonsaiClient: refusing to start cameras: {e}")
+        raise
+
+
 class FlirBonsaiClient:
     """Camera client for FLIR cameras driven by Bonsai subprocesses.
 
@@ -181,7 +211,9 @@ class FlirBonsaiClient:
         setup_agents()         -> no-op
         initialize_acquisition -> stores pre-built acqdir + basename; caller must mkdir
         start_preview()        -> no-op
-        start_recording()      -> creates MultiCameraRunner and starts subprocesses
+        start_recording()      -> matches cameras by serial (when the probe is
+                                  available), then starts one subprocess each;
+                                  raises on a camera mismatch
         stop_acquisition()     -> stops subprocesses and waits for clean exit
         stop()                 -> cleanup; safe to call even if never started
     """
@@ -231,8 +263,12 @@ class FlirBonsaiClient:
             ]
         )
 
+        plan = _plan_flir_cameras(list(cameras), cfg.driver)
+
         runners = []
-        for cam in cameras:
+        for i, cam in enumerate(cameras):
+            index = plan[i].index if plan else cam.index
+            serial = {"cam_serial": plan[i].serial} if plan and plan[i].serial else {}
             cam_label = (
                 f"{cam.name}.{cam.index}"
                 if getattr(cam, "name", "")
@@ -247,9 +283,10 @@ class FlirBonsaiClient:
                     workflow=workflow,
                     acqdir=self._acqdir,
                     cam_basename=cam_basename,
-                    cam_index=cam.index,
+                    cam_index=index,
                     driver=cfg.driver,
                     bonsai_exe=bonsai_exe,
+                    **serial,
                 )
             )
 
