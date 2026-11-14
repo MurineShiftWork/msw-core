@@ -53,20 +53,28 @@ def preflight_hardware_check(args_dict: dict) -> None:
         if bpod_port and not test_serial_port_is_accessible(bpod_port):
             errors.append(f"bpod serial port not accessible: {bpod_port!r}")
 
-    # --- Camera (if task records video): what the setup's camera backend needs ---
-    if task_settings.get("record_video", False):
-        cameras = getattr(setup_config, "cameras", None)
-        if cameras is not None and cameras.backend == "flir_bonsai":
-            # No RCE config file: Bonsai is found at launch (setup bonsai_exe, else BONSAI_EXE).
-            if cameras.bonsai_exe and not Path(cameras.bonsai_exe).exists():
-                errors.append(f"Bonsai executable not found: {cameras.bonsai_exe!r}")
-        else:
-            cam_cfg = args_dict.get("config_file_camera", "")
-            if not cam_cfg or not Path(cam_cfg).exists():
-                errors.append(f"Camera config not found: {cam_cfg!r}")
+    # --- Cameras: every group this run starts needs its backend plugin installed ---
+    errors += _camera_errors(args_dict, bool(task_settings.get("record_video", False)))
 
     if errors:
         bullet_list = "\n".join(f"  • {e}" for e in errors)
         raise RuntimeError(
             f"Pre-flight check failed: fix before session can start:\n{bullet_list}"
         )
+
+
+def _camera_errors(args_dict: dict, record_video: bool) -> list[str]:
+    from msw_plugin_api.camera import camera_backend_names
+
+    from murineshiftwork.hardware.camera.session import backend_install_hint
+
+    groups = args_dict.get("camera_groups") or []
+    if record_video and not any(g.record == "with_video" for g in groups):
+        return ["record_video is on but the setup has no video cameras"]
+    installed = set(camera_backend_names())
+    return [
+        f"camera group {g.name!r}: backend {g.backend!r} is not installed: "
+        f"{backend_install_hint(g.backend)}"
+        for g in groups
+        if (record_video or g.record == "always") and g.backend not in installed
+    ]

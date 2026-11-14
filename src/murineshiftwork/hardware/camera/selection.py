@@ -1,25 +1,24 @@
 """Choose which of a setup's cameras a task records.
 
-A camera's name is its view: the FLIR ``CameraUnit.name`` or the RCE agent's
-``camera_config.description`` in the ensemble YAML. The choice is the task setting
-``record_cameras``, resolved like any other setting (task.yaml, the setup's
-``task_overrides``, the subject's ``task_overrides`` or
-``-ts record_cameras=top,bottom``):
+The choice is the task setting ``record_cameras``, resolved like any other setting
+(task.yaml, the setup's ``task_overrides``, the subject's ``task_overrides`` or
+``-ts record_cameras=top,bottom``). It applies to the groups that record with video
+(``record: with_video``); groups with ``record: always`` start in every task run and
+cannot be chosen.
 
-- unset: the task records all cameras, as before;
-- ``all``: the task records every camera of the setup's camera config;
-- a list of names: the task records only those cameras.
+- unset: every camera of every video group records;
+- ``all``: the same, with the camera names written to the session settings;
+- a list of camera names: a unit name, or for an RCE group without units, the
+  agent's ``camera_config.description`` in the ensemble YAML.
 
-Values are camera names, as a YAML list (``[top, bottom]``) or a comma-separated
-string (``top,bottom``). Names containing ``:`` are refused: the ``group:`` and
-``role:`` prefixes are reserved for choosing cameras by group or role later.
+Names are given as a YAML list (``[top, bottom]``) or a comma-separated string.
+Names containing ``:`` are refused: the ``group:`` and ``role:`` prefixes are
+reserved for choosing cameras by group or role. A video group none of whose
+cameras is chosen does not start.
 
 The choice is resolved and checked once, before any hardware starts: an unknown
-name, an empty list or a setup whose cameras cannot be named refuses the run.
-For a list of names the task receives a copy of the setup's ``CameraConfig`` with
-``selected`` set, and the camera clients start only those cameras.
-
-Reading the RCE ensemble YAML here is plain YAML: no rpi_camera_ensemble import.
+name, an empty list or a setup whose cameras cannot be named refuses
+the run. Reading the RCE ensemble YAML here is plain YAML: no backend import.
 """
 
 from __future__ import annotations
@@ -31,12 +30,12 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 if TYPE_CHECKING:
-    from murineshiftwork.logic.config.models import CameraConfig
+    from murineshiftwork.logic.config.models import CameraGroup
 
 log = logging.getLogger(__name__)
 
 RECORD_CAMERAS_KEY = "record_cameras"
-#: ``record_cameras`` value meaning every camera of the setup's camera config
+#: ``record_cameras`` value meaning every camera of the video groups
 RECORD_ALL = "all"
 
 
@@ -48,9 +47,7 @@ def parse_record_cameras(value: Any) -> list[str] | str:
     """Normalise a ``record_cameras`` value to a list of names, or ``"all"``.
 
     Accepts ``all``, a list of camera names or a string as given on the command
-    line (``top``, ``top,bottom`` or ``[top, bottom]``). A name may not contain
-    ``:``: ``group:<name>`` and ``role:<name>`` are reserved for selecting cameras
-    by group or role, which is not supported yet.
+    line (``top``, ``top,bottom`` or ``[top, bottom]``).
 
     Raises:
         CameraSelectionError: If the value is empty, not strings, or a name
@@ -108,44 +105,39 @@ def rce_camera_names(ensemble_cfg_file: str | Path) -> dict[str, str]:
     return {i: n for i, n in _rce_agent_names(ensemble_cfg_file).items() if n}
 
 
-def camera_names(cameras: CameraConfig, config_file_camera: str = "") -> list[str]:
-    """Return the names of the setup's cameras, in configured order.
+def camera_names(group: CameraGroup) -> list[str]:
+    """Return the names of a group's cameras, in configured order.
 
-    Args:
-        cameras: The setup's camera config.
-        config_file_camera: RCE ensemble YAML used when ``cameras.config`` is empty.
+    A group lists its cameras as ``units``. An RCE group without units names them
+    in its ensemble YAML (``settings.config``).
 
     Raises:
-        CameraSelectionError: If the cameras have no usable names: FLIR units
-            without names (or the ``n_cameras`` shorthand), RCE agents without a
+        CameraSelectionError: If the cameras have no usable names: a FLIR group
+            using the ``n_cameras`` shorthand, RCE agents without a
             ``camera_config.description``, a missing RCE ensemble YAML, or a name
             used twice.
     """
-    if cameras.backend == "flir_bonsai":
-        if not cameras.cameras or not all(c.name for c in cameras.cameras):
-            raise CameraSelectionError(
-                "cameras: to choose cameras per task, give every FLIR camera a name "
-                "(cameras: [{index: 0, name: top}, ...]) instead of n_cameras"
-            )
-        names = [c.name for c in cameras.cameras]
-    elif cameras.backend == "rce":
-        cfg_file = cameras.config or config_file_camera
+    if group.units:
+        names = group.unit_names
+    elif group.backend == "rce":
+        cfg_file = str(group.settings.get("config") or "")
         if not cfg_file or not Path(cfg_file).exists():
             raise CameraSelectionError(
-                f"cameras: RCE ensemble config not found ({cfg_file!r}); "
-                "cannot check the camera names"
+                f"cameras: group {group.name!r}: RCE ensemble config not found "
+                f"({cfg_file!r}); cannot check the camera names"
             )
         agents = _rce_agent_names(cfg_file)
         unnamed = sorted(i for i, n in agents.items() if not n)
         if not agents or unnamed:
             raise CameraSelectionError(
-                "cameras: to choose cameras per task, give every RCE agent a "
-                f"camera_config.description (unnamed: {unnamed})"
+                f"cameras: group {group.name!r}: to choose cameras per task, give "
+                f"every RCE agent a camera_config.description (unnamed: {unnamed})"
             )
         names = list(agents.values())
     else:
         raise CameraSelectionError(
-            f"cameras: backend {cameras.backend!r} does not support choosing cameras"
+            f"cameras: group {group.name!r}: to choose cameras per task, list them "
+            "as named units (units: [{name: top, ...}])"
         )
     dupes = sorted({n for n in names if names.count(n) > 1})
     if dupes:
@@ -153,32 +145,61 @@ def camera_names(cameras: CameraConfig, config_file_camera: str = "") -> list[st
     return names
 
 
-def resolve_record_cameras(
-    cameras: CameraConfig | None,
-    value: Any,
-    config_file_camera: str = "",
-) -> tuple[CameraConfig | None, list[str] | None]:
-    """Resolve a set ``record_cameras`` value against the setup's cameras.
-
-    Returns ``(narrowed, recorded)``: ``narrowed`` is the camera config to hand to
-    the task (None keeps the setup's own config, recording all cameras) and
-    ``recorded`` is the value to write back to the task settings. For ``all`` it
-    is the list of the setup's camera names. When the cameras have no usable names
-    it is None: they all record, exactly as with ``record_cameras`` unset, and the
-    setting is dropped so ``all`` never reaches the task.
+def select_units(group: CameraGroup, names: list[str]) -> CameraGroup:
+    """Return a copy of ``group`` that records only the cameras ``names``.
 
     Raises:
-        CameraSelectionError: If the setup has no cameras, the value is empty or
-            not names, or a name is unknown.
+        CameraSelectionError: If a name is not one of the group's cameras, or a
+            FLIR group pins a multi-camera Bonsai workflow.
     """
-    if cameras is None:
+    from murineshiftwork.logic.config.models import CameraUnit
+
+    known = camera_names(group)
+    unknown = [n for n in names if n not in known]
+    if unknown:
         raise CameraSelectionError(
-            f"{RECORD_CAMERAS_KEY} is set but the setup has no cameras"
+            f"unknown camera name(s) {unknown}; group {group.name!r} has {known}"
         )
-    names = parse_record_cameras(value)
-    if isinstance(names, str):  # RECORD_ALL
+    workflow = str(group.settings.get("workflow") or "")
+    if group.backend == "flir_bonsai" and workflow and not workflow.endswith("-1cam"):
+        raise CameraSelectionError(
+            f"cameras: group {group.name!r} workflow {workflow!r} records several "
+            "cameras in one Bonsai process; choosing cameras needs a -1cam workflow"
+        )
+    if group.units:
+        units = [u for u in group.units if u.name in names]
+    else:
+        units = [CameraUnit(name=n) for n in known if n in names]
+    return group.model_copy(update={"units": units})
+
+
+def resolve_record_cameras(
+    groups: list[CameraGroup], value: Any
+) -> tuple[list[CameraGroup] | None, list[str] | None]:
+    """Resolve a set ``record_cameras`` value against the setup's camera groups.
+
+    Returns ``(narrowed, recorded)``: ``narrowed`` is the list of groups for the run
+    (None keeps the setup's groups, recording every camera), and ``recorded`` is the
+    value to write back to the task settings. For ``all`` it is the list of camera
+    names of the video groups; when those cameras have no usable names it is None:
+    they all record, exactly as with ``record_cameras`` unset, and the setting is
+    dropped so ``all`` never reaches the task.
+
+    Raises:
+        CameraSelectionError: If the setup has no video cameras, the value is
+            empty or not names, or names an unknown camera or one of a group
+            that records always.
+    """
+    video = [g for g in groups if g.record == "with_video"]
+    if not video:
+        raise CameraSelectionError(
+            f"{RECORD_CAMERAS_KEY} is set but the setup has no cameras that record "
+            "with video"
+        )
+    values = parse_record_cameras(value)
+    if isinstance(values, str):  # RECORD_ALL
         try:
-            return None, camera_names(cameras, config_file_camera)
+            return None, [n for g in video for n in camera_names(g)]
         except CameraSelectionError as exc:
             log.warning(
                 "%s: all on cameras without usable names (%s); recording all of "
@@ -187,31 +208,37 @@ def resolve_record_cameras(
                 exc,
             )
             return None, None
-    return select_cameras(cameras, names, config_file_camera), names
 
+    always = {g.name: g for g in groups if g.record == "always"}
+    names_of: dict[str, list[str]] = {}
+    naming_errors: list[CameraSelectionError] = []
+    for g in video:
+        try:
+            names_of[g.name] = camera_names(g)
+        except CameraSelectionError as exc:
+            naming_errors.append(exc)
+    chosen: dict[str, list[str]] = {}
+    for v in values:
+        owner = next((g for g in video if v in names_of.get(g.name, [])), None)
+        if owner is None:
+            if any(v in g.unit_names for g in always.values()):
+                raise CameraSelectionError(
+                    f"{RECORD_CAMERAS_KEY} {v!r}: the camera's group records always"
+                )
+            if naming_errors:
+                raise naming_errors[0]
+            known = [n for names in names_of.values() for n in names]
+            raise CameraSelectionError(
+                f"unknown camera name(s) [{v!r}]; this setup has {known}"
+            )
+        chosen.setdefault(owner.name, []).append(v)
 
-def select_cameras(
-    cameras: CameraConfig, names: list[str], config_file_camera: str = ""
-) -> CameraConfig:
-    """Return a copy of ``cameras`` narrowed to ``names``.
-
-    Raises:
-        CameraSelectionError: If a name is not one of the setup's cameras, or a
-            FLIR setup pins a multi-camera Bonsai workflow.
-    """
-    known = camera_names(cameras, config_file_camera)
-    unknown = [n for n in names if n not in known]
-    if unknown:
-        raise CameraSelectionError(
-            f"unknown camera name(s) {unknown}; this setup has {known}"
-        )
-    if (
-        cameras.backend == "flir_bonsai"
-        and cameras.workflow
-        and not cameras.workflow.endswith("-1cam")
-    ):
-        raise CameraSelectionError(
-            f"cameras.workflow {cameras.workflow!r} records several cameras in one "
-            "Bonsai process; choosing cameras needs a -1cam workflow"
-        )
-    return cameras.with_selected(names)
+    narrowed: list[CameraGroup] = []
+    for g in groups:
+        if g.record == "always":
+            narrowed.append(g)
+            continue
+        if g.name not in chosen:
+            continue
+        narrowed.append(select_units(g, chosen[g.name]))
+    return narrowed, list(values)

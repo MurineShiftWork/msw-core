@@ -1,187 +1,60 @@
-"""Camera client factory: backend-agnostic interface for session recording.
+"""Deprecated camera client: the old per-task method set over a ``CameraSession``.
 
-Both RceConductorAdapter and FlirBonsaiClient expose the same method set so
-task code never branches on camera backend:
+Tasks written before ``CameraSession`` drive the camera themselves::
 
-    conductor = make_camera_client(cameras_config, output_dir)
-    if conductor:
-        conductor.start()
-        conductor.setup_agents()
-        # Build the camera acquisition paths with the backend's own acq_type - do NOT hardcode
-        # video_flir; the backend is setup-dependent (video_rce for the rpi ensemble):
-        #     generate_session_paths(acq_type=conductor.acq_type, linked_to=session_container)
-        conductor.initialize_acquisition(
-            acquisition_path=...,  # used by RCE (relative, for the conductor)
-            acquisition_name=...,  # used by RCE
-            acqdir=...,            # absolute camera acq dir (manifest peer + FLIR)
-            basename=...,          # camera acq session_basename
-        )
-        conductor.start_preview()
-        conductor.start_recording()
-        ...
-        conductor.stop_acquisition()
-        conductor.stop()
+    conductor = make_camera_client(args_dict.get("cameras_config"), ...)
+    conductor.start()
+    conductor.setup_agents()
+    conductor.initialize_acquisition(
+        acquisition_path=..., acquisition_name=..., acqdir=..., basename=...
+    )
+    conductor.start_preview()
+    conductor.start_recording()
+    ...
+    conductor.stop_acquisition()
+    conductor.stop()
 
-Backends
---------
-rce         : rpi_camera_ensemble.Conductor: RPi camera colony.  Lazy import.
-flir_bonsai : BonsaiCameraRunner/MultiCameraRunner from msw_flir_bonsai.  Lazy import.
+``make_camera_client`` keeps that working on one camera group (``cameras_config``,
+the first group recording with video) through a ``CameraSession`` with the
+``raise`` policy. Move tasks to ``CameraSession.from_run``, which starts every group.
 """
 
 from __future__ import annotations
 
 import logging
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from murineshiftwork.namespace import msw_file
-from murineshiftwork.namespace.manifest import (
-    append_acquisition_to_session,
-    finalize_acquisition_in_session,
-)
+from msw_plugin_api.camera import CameraTarget
+
+from murineshiftwork.hardware.camera.session import POLICY_RAISE, CameraSession
 
 if TYPE_CHECKING:
-    from murineshiftwork.logic.config.models import CameraConfig
+    from murineshiftwork.logic.config.models import CameraGroup
 
 log = logging.getLogger(__name__)
 
 
-def _register_camera_peer(
-    acq_dir: str, basename: str, cameras: list[str] | None = None
-) -> None:
-    """Register a camera acquisition as a peer in its session_manifest.yaml.
+class LegacyCameraClient:
+    """The old camera client method set, driving one group through a session."""
 
-    The camera acquisition dir sits inside the session container (built with
-    ``linked_to=<container>``), so the container is its parent. ``cameras`` (the
-    names of the cameras recorded, when known) is stored on the entry.
-    Registration is best-effort: a manifest failure must never interrupt
-    recording.
-    """
-    if not acq_dir or not basename:
-        return
-    container = Path(acq_dir).parent
-    try:
-        extra = {"cameras": list(cameras)} if cameras else None
-        append_acquisition_to_session(container, basename, extra=extra)
-    except Exception:  # noqa: BLE001 - never let bookkeeping break acquisition
-        log.warning("could not register camera peer %s", basename, exc_info=True)
+    def __init__(self, group: CameraGroup, policy: str = POLICY_RAISE) -> None:
+        self.group = group
+        self.session = CameraSession([group], policy=policy)
+        self._target: CameraTarget | None = None
+        self._host_folder = ""
 
-
-def _finalize_camera_peer(
-    acq_dir: str, basename: str, status: str = "complete"
-) -> None:
-    """Mark a registered camera acquisition finished in session_manifest.yaml."""
-    if not acq_dir or not basename:
-        return
-    try:
-        finalize_acquisition_in_session(Path(acq_dir).parent, basename, status=status)
-    except Exception:  # noqa: BLE001
-        log.warning("could not finalize camera peer %s", basename, exc_info=True)
-
-
-# ---------------------------------------------------------------------------
-# RCE adapter
-
-
-def _agent_camera_name(agent: Any) -> str:
-    """The camera name of an RCE agent: its ``camera_config.description``, stripped
-    as the name check in ``selection`` strips it."""
-    return str(getattr(agent.camera_config, "description", "") or "").strip()
-
-
-def _select_agents(agents: dict[str, Any], selected: list[str]) -> dict[str, Any]:
-    """Keep the ensemble agents whose ``camera_config.description`` is selected."""
-    kept = {
-        name: agent
-        for name, agent in agents.items()
-        if _agent_camera_name(agent) in selected
-    }
-    if not kept:
-        raise ValueError(f"no RCE agent matches the selected cameras {selected}")
-    return kept
-
-
-class RceConductorAdapter:
-    """Wrap rpi_camera_ensemble.Conductor with the shared camera client API.
-
-    All rpi_camera_ensemble imports are deferred until start() is called so
-    that the package is not required on machines that use FLIR cameras only.
-
-    Conductor commands raise when agents fail (``EnsembleError``, a ``RuntimeError``).
-    The adapter lets that propagate so the session fails visibly, after marking the
-    camera peer ``failed`` in the session manifest. A failed init, preview or record
-    finalises the peer at once; ``stop_acquisition`` always finalises it, as
-    ``complete`` only when the stop succeeded. The peer is finalised once.
-    """
-
-    #: namespace acq_type for this backend; callers use it to name the camera acquisition
-    #: (do NOT hardcode video_flir in tasks - the backend is setup-dependent).
-    acq_type: str = "video_rce"
-
-    def __init__(
-        self,
-        ensemble_cfg_file: str,
-        output_dir: str,
-        selected: list[str] | None = None,
-    ) -> None:
-        self._ensemble_cfg_file = ensemble_cfg_file
-        self._output_dir = output_dir
-        # camera names (agent camera_config.description) to record; None = all agents
-        self._selected = list(selected) if selected is not None else None
-        # names written on the manifest peer entry; filled from the ensemble in start()
-        self._recorded: list[str] | None = self._selected
-        self._conductor: Any = None
-        self._acq_dir: str = ""
-        self._basename: str = ""
-        self._peer_finalized = False
-
-    def _finalize_peer(self, status: str) -> None:
-        if not self._peer_finalized:
-            self._peer_finalized = True
-            _finalize_camera_peer(self._acq_dir, self._basename, status=status)
-
-    def _command(self, method: str, **kwargs: Any) -> None:
-        """Run a conductor command; on any failure mark the peer failed and re-raise."""
-        if self._conductor is None:
-            return
-        ok = False
-        try:
-            getattr(self._conductor, method)(**kwargs)
-            ok = True
-        finally:
-            if not ok:
-                log.error("RCE %s failed; camera peer marked failed", method)
-                self._finalize_peer("failed")
+    @property
+    def acq_type(self) -> str:
+        """Acquisition type of the group's backend (``video_flir``, ``video_rce``)."""
+        return self.session.acq_type(self.group.name)
 
     def start(self) -> None:
-        from rpi_camera_ensemble.conductor.conductor import Conductor
-        from rpi_camera_ensemble.config.acquisition import EnsembleAcquisitionConfig
-        from rpi_camera_ensemble.config.conductor import ConductorConfig
-
-        from murineshiftwork.logic.log import suppress_third_party_console_handlers
-
-        ensemble_cfg = EnsembleAcquisitionConfig.from_yaml(path=self._ensemble_cfg_file)
-        if self._selected is not None:
-            # unselected agents are never contacted (setup, preview or recording)
-            ensemble_cfg = ensemble_cfg.model_copy(
-                update={"agents": _select_agents(ensemble_cfg.agents, self._selected)}
-            )
-            log.info(
-                "Camera: RCE recording %s (agents %s)",
-                self._selected,
-                sorted(ensemble_cfg.agents),
-            )
-        names = [_agent_camera_name(a) for a in ensemble_cfg.agents.values()]
-        self._recorded = names if names and all(names) else None
-        conductor_cfg = ConductorConfig(data_dir=self._output_dir)
-        self._conductor = Conductor(config=conductor_cfg, ensemble_config=ensemble_cfg)
-        suppress_third_party_console_handlers()
-        self._conductor.start()
-        suppress_third_party_console_handlers()
+        self.session.open()
 
     def setup_agents(self) -> None:
-        if self._conductor is not None:
-            self._conductor.setup_agents()
+        """Agents are reached in ``start`` (the backend's preflight)."""
 
     def initialize_acquisition(
         self,
@@ -191,222 +64,89 @@ class RceConductorAdapter:
         basename: str = "",
         **_: Any,
     ) -> None:
-        # The session_manifest is an msw artifact written on THIS machine, so register the
-        # camera peer with the absolute LOCAL acq dir (`acqdir`) and its `basename` - the same
-        # msw-provided paths the FLIR client uses. `acquisition_path`/`acquisition_name` are the
-        # RELATIVE path + name the remote rce conductor records under its own data_dir; they are
-        # for the conductor only (registering with them wrote the manifest to a bogus
-        # CWD-relative path).
-        self._acq_dir = acqdir
-        self._basename = basename
-        self._peer_finalized = False
-        _register_camera_peer(acqdir, basename, self._recorded)
-        self._command(
-            "initialize_acquisition",
-            acquisition_path=acquisition_path,
-            acquisition_name=acquisition_name,
+        self._target = CameraTarget(
+            acqdir=acqdir,
+            basename=basename,
+            host_relpath=acquisition_path,
+            host_name=acquisition_name,
         )
+        # the behaviour acquisition sits next to the camera one in the session container
+        if acqdir and acquisition_name:
+            host = Path(acqdir).parent / acquisition_name
+            self._host_folder = str(host) if host.is_dir() else ""
 
     def start_preview(self) -> None:
-        self._command("start_preview")
+        """Backends preview as part of ``start``."""
 
     def start_recording(self) -> None:
-        self._command("start_recording")
+        if self._target is None:
+            raise RuntimeError(
+                "initialize_acquisition must come before start_recording"
+            )
+        self.session.start_targets(
+            {self.group.name: self._target}, host_folder=self._host_folder
+        )
 
     def stop_acquisition(self) -> None:
-        status = "failed"
-        try:
-            if self._conductor is not None:
-                self._conductor.stop_acquisition()
-            status = "complete"
-        finally:
-            self._finalize_peer(status)
+        self.session.stop("stopped")
 
     def stop(self) -> None:
-        if self._conductor is not None:
-            try:
-                self._conductor.stop()
-            except Exception:
-                log.warning(
-                    "RceConductorAdapter.stop() did not complete cleanly", exc_info=True
-                )
-            self._conductor = None
-
-
-# ---------------------------------------------------------------------------
-# FLIR/Bonsai client
-
-
-class FlirBonsaiClient:
-    """Camera client for FLIR cameras driven by Bonsai subprocesses.
-
-    Bonsai acquisition is started/stopped as a group of independent subprocesses
-    (one per camera) via msw_flir_bonsai.MultiCameraRunner.  All msw_flir_bonsai
-    imports are deferred so the package is not required on machines using RCE cameras.
-
-    v4 namespace: the caller builds the video_flir acquisition paths via
-    ``generate_session_paths(acq_type="video_flir", linked_to=session_container)``
-    and passes them directly to ``initialize_acquisition(acqdir=..., basename=...)``.
-    No path derivation happens here.
-
-    Recording lifecycle:
-        start()                -> no-op (Bonsai starts with recording: no preview mode)
-        setup_agents()         -> no-op
-        initialize_acquisition -> stores pre-built acqdir + basename; caller must mkdir
-        start_preview()        -> no-op
-        start_recording()      -> creates MultiCameraRunner and starts subprocesses
-        stop_acquisition()     -> stops subprocesses and waits for clean exit
-        stop()                 -> cleanup; safe to call even if never started
-    """
-
-    #: namespace acq_type for this backend (see RceConductorAdapter.acq_type).
-    acq_type: str = "video_flir"
-
-    def __init__(self, config: CameraConfig, output_dir: str) -> None:
-        self._config = config
-        self._acqdir: str = ""
-        self._basename: str = ""
-        self._runner: Any = None
-
-    def start(self) -> None:
-        pass
-
-    def setup_agents(self) -> None:
-        pass
-
-    def initialize_acquisition(
-        self,
-        acqdir: str = "",
-        basename: str = "",
-        **_: Any,
-    ) -> None:
-        self._acqdir = acqdir
-        self._basename = basename
-        log.debug(f"FlirBonsaiClient: acqdir={acqdir!r} basename={basename!r}")
-        _register_camera_peer(acqdir, basename, self._recorded_names())
-
-    def _recorded_names(self) -> list[str] | None:
-        """Names of the cameras this client records, or None if they are unnamed."""
-        cfg = self._config
-        if cfg is None:
-            return None
-        if cfg.selected is not None:
-            return list(cfg.selected)
-        names = [c.name for c in cfg.cameras]
-        return names if names and all(names) else None
-
-    def start_preview(self) -> None:
-        pass
-
-    def start_recording(self) -> None:
-        from msw_flir_bonsai.runner import BonsaiCameraRunner, MultiCameraRunner
-
-        cfg = self._config
-        workflow = cfg.workflow or f"run-flir-{cfg.driver}-1cam"
-        bonsai_exe = cfg.bonsai_exe or None
-
-        cameras = (
-            cfg.cameras
-            if cfg.cameras
-            else [
-                type("_Cam", (), {"index": i, "name": ""})()
-                for i in range(cfg.n_cameras)
-            ]
-        )
-        if cfg.selected is not None:
-            if not workflow.endswith("-1cam"):
-                raise RuntimeError(
-                    f"FlirBonsaiClient: workflow {workflow!r} records several cameras "
-                    "in one process; choosing cameras needs a -1cam workflow"
-                )
-            # unselected cameras get no Bonsai process
-            cameras = [c for c in cameras if getattr(c, "name", "") in cfg.selected]
-
-        runners = []
-        for cam in cameras:
-            cam_label = (
-                f"{cam.name}.{cam.index}"
-                if getattr(cam, "name", "")
-                else f"cam{cam.index}"
-            )
-            # Per-camera artifact stem is a standard namespace .msw. artifact
-            # below the video_flir acquisition basename; the builder owns the
-            # naming (no hand-built prefix). flir just receives the ready stem.
-            cam_basename = msw_file(self._basename, cam_label).name
-            runners.append(
-                BonsaiCameraRunner(
-                    workflow=workflow,
-                    acqdir=self._acqdir,
-                    cam_basename=cam_basename,
-                    cam_index=cam.index,
-                    driver=cfg.driver,
-                    bonsai_exe=bonsai_exe,
-                )
-            )
-
-        self._runner = MultiCameraRunner(runners)
-        labels = [f"{getattr(c, 'name', '') or 'cam'}{c.index}" for c in cameras]
-        log.info(
-            f"FlirBonsaiClient: starting {len(cameras)} camera(s) "
-            f"driver={cfg.driver} cameras={labels} acqdir={self._acqdir!r}"
-        )
-        self._runner.start()
-
-    def stop_acquisition(self) -> None:
-        if self._runner is not None:
-            self._runner.stop(timeout=5.0)
-            for runner in self._runner:
-                rc = runner.wait(timeout=10.0)
-                if rc is None:
-                    log.warning(
-                        f"FlirBonsaiClient: cam{runner._cam_index} did not exit cleanly"
-                    )
-        _finalize_camera_peer(self._acqdir, self._basename)
-
-    def stop(self) -> None:
-        if self._runner is not None and self._runner.any_running:
-            self._runner.stop(timeout=5.0)
-        self._runner = None
-
-
-# ---------------------------------------------------------------------------
-# Factory
+        self.session.stop("stopped")
 
 
 def make_camera_client(
-    cameras_config: CameraConfig | None,
+    cameras_config: CameraGroup | list[CameraGroup] | None,
     config_file_camera: str = "",
     output_dir: str = "",
-) -> RceConductorAdapter | FlirBonsaiClient | None:
-    """Return a camera client for the given config, or None if no camera is configured.
+) -> LegacyCameraClient | None:
+    """Return a client for one camera group, or None when there is none.
+
+    Deprecated: use ``CameraSession.from_run``.
 
     Args:
-        cameras_config: SetupConfig.cameras object (may be None).
-        config_file_camera: Legacy RCE config file path (used when cameras_config is None
-            or cameras_config.backend == "rce" without a .config path).
-        output_dir: Base data directory passed to the camera backend.
+        cameras_config: The run's ``cameras_config`` (one group), or a list of
+            groups of which the first is used.
+        config_file_camera: RCE ensemble YAML used when there is no group, or the
+            RCE group has no ``settings.config``.
+        output_dir: Unused; kept for the old signature.
     """
-    if cameras_config is None:
-        if config_file_camera and Path(config_file_camera).exists():
-            log.debug(f"Camera: using RCE config from CLI arg: {config_file_camera}")
-            return RceConductorAdapter(config_file_camera, output_dir)
-        return None
+    warnings.warn(
+        "make_camera_client is deprecated; use "
+        "murineshiftwork.hardware.camera.CameraSession.from_run",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    from murineshiftwork.logic.config.models import CameraGroup
 
-    if cameras_config.backend == "flir_bonsai":
-        log.debug(f"Camera: FLIR/Bonsai backend, {cameras_config.n_cameras} cam(s)")
-        return FlirBonsaiClient(cameras_config, output_dir)
-
-    if cameras_config.backend == "rce":
-        cfg_file = cameras_config.config or config_file_camera
-        if cfg_file and Path(cfg_file).exists():
-            log.debug(f"Camera: RCE backend, config={cfg_file}")
-            return RceConductorAdapter(
-                cfg_file, output_dir, selected=cameras_config.selected
+    group: CameraGroup | None
+    if isinstance(cameras_config, list | tuple):
+        if len(cameras_config) > 1:
+            log.warning(
+                "Camera: make_camera_client drives only group %r of %s",
+                cameras_config[0].name,
+                [g.name for g in cameras_config],
             )
-        log.info(
-            "Camera: RCE backend selected but no config file found: running without video"
+        group = cameras_config[0] if cameras_config else None
+    else:
+        group = cameras_config
+    cli_exists = bool(config_file_camera) and Path(config_file_camera).exists()
+    if group is None:
+        if not cli_exists:
+            return None
+        log.debug(f"Camera: using RCE config from CLI arg: {config_file_camera}")
+        group = CameraGroup(
+            name="rce", backend="rce", settings={"config": config_file_camera}
         )
-        return None
-
-    log.warning(f"Camera: unknown backend {cameras_config.backend!r}: skipping")
-    return None
+    if group.backend == "rce":
+        cfg_file = str(group.settings.get("config") or "")
+        if not (cfg_file and Path(cfg_file).exists()):
+            if not cli_exists:
+                log.info(
+                    "Camera: RCE backend selected but no config file found: "
+                    "running without video"
+                )
+                return None
+            group = group.model_copy(
+                update={"settings": {**group.settings, "config": config_file_camera}}
+            )
+    return LegacyCameraClient(group)

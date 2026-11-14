@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from murineshiftwork.cli.preflight import preflight_hardware_check
-from murineshiftwork.logic.config.models import CameraConfig
+from murineshiftwork.logic.config.models import CameraGroup
 from murineshiftwork.logic.run_context import DevicePorts, RunContext
 
 
@@ -99,36 +99,51 @@ def test_skipped_for_debug_and_test_subject(tmp_path, monkeypatch, extra):
     assert seen == []  # bypassed before any port is probed
 
 
-def test_reports_missing_camera_config_when_recording_video(tmp_path):
-    d = _args(tmp_path, None, DevicePorts(), config_file_camera="missing_cam.yaml")
+@pytest.fixture
+def installed(monkeypatch):
+    """Pretend only the ``flir_bonsai`` camera backend is installed."""
+
+    class _EP:
+        name = "flir_bonsai"
+
+    monkeypatch.setattr("msw_plugin_api.camera.entry_points", lambda group: [_EP()])
+
+
+def _groups(*groups):
+    return [CameraGroup.model_validate(g) for g in groups]
+
+
+def test_video_without_video_cameras_is_reported(tmp_path, installed):
+    d = _args(tmp_path, None, DevicePorts())
     d["settings.task.patched"] = {"record_video": True}
-    with pytest.raises(RuntimeError, match="Camera config not found"):
+    with pytest.raises(RuntimeError, match="no video cameras"):
         preflight_hardware_check(d)
 
 
-def test_camera_config_present_passes(tmp_path):
-    cam = tmp_path / "camera.yaml"
-    cam.touch()
-    d = _args(tmp_path, None, DevicePorts(), config_file_camera=str(cam))
+def test_installed_backend_passes(tmp_path, installed):
+    d = _args(tmp_path, None, DevicePorts())
+    d["camera_groups"] = _groups({"name": "b", "backend": "flir_bonsai"})
     d["settings.task.patched"] = {"record_video": True}
     preflight_hardware_check(d)  # no raise
 
 
-def test_flir_bonsai_setup_needs_no_rce_camera_config(tmp_path):
-    setup = _Setup({}, CameraConfig(backend="flir_bonsai"))
-    d = _args(tmp_path, setup, DevicePorts(), config_file_camera="camera.rcc.config")
-    d["settings.task.patched"] = {"record_video": True}
-    preflight_hardware_check(d)  # no raise
-
-
-def test_flir_bonsai_reports_missing_bonsai_exe(tmp_path):
-    cameras = CameraConfig(
-        backend="flir_bonsai", bonsai_exe=str(tmp_path / "Bonsai.exe")
+def test_missing_backend_names_what_to_install(tmp_path, installed):
+    d = _args(tmp_path, None, DevicePorts())
+    d["camera_groups"] = _groups(
+        {"name": "b", "backend": "flir_bonsai"},
+        {"name": "pupil", "backend": "rce", "record": "always"},
     )
-    d = _args(tmp_path, _Setup({}, cameras), DevicePorts())
-    d["settings.task.patched"] = {"record_video": True}
-    with pytest.raises(RuntimeError, match="Bonsai executable not found"):
-        preflight_hardware_check(d)
+    with pytest.raises(RuntimeError) as exc:
+        preflight_hardware_check(d)  # the always group starts without video
+    msg = str(exc.value)
+    assert "camera group 'pupil': backend 'rce' is not installed" in msg
+    assert "murineshiftwork[rce]" in msg
+
+
+def test_video_backend_is_not_checked_without_video(tmp_path, installed):
+    d = _args(tmp_path, None, DevicePorts())
+    d["camera_groups"] = _groups({"name": "r", "backend": "rce"})
+    preflight_hardware_check(d)  # no raise
 
 
 def test_reports_output_dir_that_cannot_be_created(tmp_path):
@@ -151,13 +166,11 @@ def test_collects_all_failures_into_one_error(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "murineshiftwork.cli.preflight.test_path_is_writable", lambda p: False
     )
-    d = _args(
-        tmp_path, None, DevicePorts(bpod="/b"), config_file_camera="missing_cam.yaml"
-    )
+    d = _args(tmp_path, None, DevicePorts(bpod="/b"))
     d["settings.task.patched"] = {"record_video": True}
     with pytest.raises(RuntimeError) as exc:
         preflight_hardware_check(d)
     msg = str(exc.value)
     assert "bpod serial port not accessible" in msg
-    assert "Camera config not found" in msg
+    assert "no video cameras" in msg
     assert "Output directory not writable" in msg

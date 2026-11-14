@@ -1,0 +1,9 @@
+---
+name: setup-1
+devices:
+  bpod:
+    type: bpod
+    port: /dev/ttyACM0
+cameras:
+  backend: rce
+  config: device_configs/cameras/setup-1.cameras.yaml

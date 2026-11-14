@@ -8,7 +8,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    PrivateAttr,
     field_validator,
     model_validator,
 )
@@ -176,47 +175,127 @@ class Calibrations(BaseModel):
 
 # ---------------------------------------------------------------------------
 # Camera config
+#
+# A setup lists camera groups. Each group is driven by one camera backend, a plugin
+# registered under the ``msw.camera`` entry point (``flir_bonsai``, ``rce``). Core only
+# knows the group's shape; ``settings`` and the extra unit keys belong to the backend,
+# which validates them when the session configures it.
+
+#: characters a camera or group name may not hold: ``,`` separates names in
+#: ``record_cameras`` and ``:`` marks the ``group:`` and ``role:`` prefixes
+_CAMERA_NAME_FORBIDDEN = frozenset(",:")
+
+#: keys of the legacy single camera block that move into the group's ``settings``
+_LEGACY_CAMERA_SETTINGS = ("config", "driver", "bonsai_exe", "workflow", "n_cameras")
+
+#: keys only a group has; a mapping without them is the legacy single block
+_GROUP_ONLY_KEYS = frozenset({"name", "units", "settings", "role", "record"})
+
+CameraRecordMode = Literal["with_video", "always"]
+
+
+def _check_camera_name(kind: str, name: str) -> str:
+    name = name.strip()
+    if not name:
+        raise ValueError(f"{kind} name is empty")
+    bad = sorted(_CAMERA_NAME_FORBIDDEN.intersection(name))
+    if bad:
+        raise ValueError(f"{kind} name {name!r} may not contain {bad}")
+    return name
 
 
 class CameraUnit(BaseModel):
-    """Per-camera specification for the FLIR/Bonsai backend."""
+    """One camera of a group.
 
-    index: int  # SDK enumeration index; run `msw flir list-cameras` to resolve
-    name: str = ""  # human label, e.g. "top" or "front"; used in artifact filenames
+    ``name`` is unique across all groups of a setup: it names the camera's files and
+    selects it in ``record_cameras``. ``hw_id`` is the hardware identity when the
+    backend has one (FLIR serial, Pi hostname). Any other key (such as a FLIR
+    ``index``) is passed to the backend unchanged.
+    """
 
+    model_config = ConfigDict(extra="allow")
 
-class CameraConfig(BaseModel):
-    backend: str = "rce"  # "rce" | "flir_bonsai"
-    config: str = ""  # RCE only: path to ensemble YAML
-    # FLIR/Bonsai-specific (ignored when backend="rce")
-    driver: str = "flycap"  # "flycap" | "spinnaker"
-    bonsai_exe: str = ""  # path to Bonsai.exe; falls back to BONSAI_EXE env var
-    workflow: str = ""  # workflow stem; auto-derived as run-flir-{driver}-1cam if empty
-    cameras: list[CameraUnit] = []  # preferred; one entry per camera
-    n_cameras: int = 1  # flat shorthand when cameras list is empty
-    # Names of the cameras to record, from the task setting record_cameras. Private
-    # so a setup YAML cannot set it: only the framework's narrowing sets it, on the
-    # copy handed to a task (see with_selected). None records all cameras.
-    _selected: list[str] | None = PrivateAttr(default=None)
+    name: str
+    hw_id: str = ""
+
+    @field_validator("name")
+    @classmethod
+    def _valid_name(cls, value: str) -> str:
+        return _check_camera_name("camera", value)
 
     @property
-    def selected(self) -> list[str] | None:
-        """Names of the cameras to record, or None to record all of them."""
-        return self._selected
+    def unit_settings(self) -> dict[str, Any]:
+        """The backend-specific keys of this unit."""
+        return dict(self.model_extra or {})
 
-    def with_selected(self, names: list[str]) -> CameraConfig:
-        """Return a copy that records only the cameras ``names``."""
-        narrowed = self.model_copy()
-        narrowed._selected = list(names)
-        return narrowed
 
-    @model_validator(mode="after")
-    def _check_names(self) -> CameraConfig:
-        names = [c.name for c in self.cameras if c.name]
-        dupes = sorted({n for n in names if names.count(n) > 1})
-        if dupes:
-            raise ValueError(f"cameras: duplicate camera names {dupes}")
-        return self
+class CameraGroup(BaseModel):
+    """Cameras driven together by one backend.
+
+    ``record`` says when the group runs: ``with_video`` groups start when the task
+    records video (narrowed by ``record_cameras``), ``always`` groups start in every
+    task run. ``role`` is free text naming the view (``eye``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    backend: str
+    role: str = ""
+    record: CameraRecordMode = "with_video"
+    units: list[CameraUnit] = []
+    settings: dict[str, Any] = {}
+
+    @field_validator("name")
+    @classmethod
+    def _valid_name(cls, value: str) -> str:
+        return _check_camera_name("camera group", value)
+
+    @field_validator("settings", mode="before")
+    @classmethod
+    def _settings_or_empty(cls, value: Any) -> Any:
+        return {} if value is None else value
+
+    @property
+    def unit_names(self) -> list[str]:
+        return [u.name for u in self.units]
+
+
+def legacy_camera_group(block: dict[str, Any]) -> dict[str, Any]:
+    """Turn the legacy single ``cameras:`` block into one group (as a mapping).
+
+    The group is named after the backend (``rce`` when unset, the old default). The
+    flat backend keys move into ``settings`` and the FLIR ``cameras: [{index, name}]``
+    list becomes ``units``; an unnamed FLIR camera is named ``cam<index>``.
+    """
+    backend = str(block.get("backend") or "rce")
+    unknown = sorted(
+        set(block) - {"backend", "cameras", "selected", *_LEGACY_CAMERA_SETTINGS}
+    )
+    if unknown:
+        raise ValueError(f"cameras: unknown keys {unknown}")
+    settings = {k: block[k] for k in _LEGACY_CAMERA_SETTINGS if k in block}
+    units = []
+    for i, cam in enumerate(block.get("cameras") or []):
+        cam = dict(cam or {})
+        if not cam.get("name"):
+            cam["name"] = f"cam{cam.get('index', i)}"
+        units.append(cam)
+    return {"name": backend, "backend": backend, "units": units, "settings": settings}
+
+
+def _check_camera_groups(groups: list[CameraGroup]) -> None:
+    def dupes(values: list[str]) -> list[str]:
+        return sorted({v for v in values if values.count(v) > 1})
+
+    if bad := dupes([g.name for g in groups]):
+        raise ValueError(f"cameras: duplicate group names {bad}")
+    if bad := dupes([n for g in groups for n in g.unit_names]):
+        raise ValueError(f"cameras: duplicate camera names {bad}")
+    # one group per backend: the camera acquisition basename carries the backend's
+    # acq_type but no group token, so two groups of one backend would collide
+    if bad := dupes([g.backend for g in groups]):
+        raise ValueError(f"cameras: more than one group uses backend {bad}")
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +331,14 @@ class SetupConfig(BaseModel):
             "values are discriminated-union device models."
         ),
     )
-    cameras: CameraConfig | None = None
+    cameras: list[CameraGroup] = Field(
+        default_factory=list,
+        description=(
+            "Camera groups of this rig, each driven by one camera backend plugin. The "
+            "legacy single block (backend, driver, cameras: [{index, name}], config) "
+            "loads as one group named after its backend."
+        ),
+    )
     calibrations: Calibrations = Calibrations()
     hooks: HooksConfig = HooksConfig()
     open_ephys_url: str = Field(
@@ -272,6 +358,22 @@ class SetupConfig(BaseModel):
             "rejected: modes are chosen per run with --task-mode."
         ),
     )
+
+    @field_validator("cameras", mode="before")
+    @classmethod
+    def _camera_groups(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        if isinstance(value, dict):
+            if _GROUP_ONLY_KEYS.intersection(value):
+                return [value]  # one group written without the list
+            return [legacy_camera_group(value)]
+        return value
+
+    @model_validator(mode="after")
+    def _check_cameras(self) -> SetupConfig:
+        _check_camera_groups(self.cameras)
+        return self
 
     @field_validator("task_overrides", mode="before")
     @classmethod

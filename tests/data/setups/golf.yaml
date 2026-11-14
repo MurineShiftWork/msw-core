@@ -1,0 +1,10 @@
+---
+name: golf
+devices:
+  bpod:
+    type: bpod
+    port: COM3
+hooks:
+  pre_task: []
+  post_task: []
+open_ephys_url: ''
