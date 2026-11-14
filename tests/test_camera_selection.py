@@ -251,3 +251,24 @@ def test_evaluate_ignores_record_cameras_without_video_or_cameras():
     }
     _resolve_record_cameras(args, patched)
     assert "record_cameras" not in patched
+
+
+def test_rce_unnamed_agent_refuses_a_list(tmp_path):
+    cfg = write_ensemble(tmp_path / "e.yaml", {"a": "top", "b": ""})
+    cameras = CameraConfig(backend="rce", config=str(cfg))
+    with pytest.raises(CameraSelectionError, match=r"unnamed: \['b'\]"):
+        resolve_record_cameras(cameras, ["top"])
+
+
+def test_rce_unnamed_agent_drops_all_instead_of_a_partial_list(tmp_path):
+    cfg = write_ensemble(tmp_path / "e.yaml", {"a": "top", "b": ""})
+    cameras = CameraConfig(backend="rce", config=str(cfg))
+    assert resolve_record_cameras(cameras, "all") == (None, None)
+
+
+def test_rce_names_are_stripped(tmp_path):
+    cfg = write_ensemble(tmp_path / "e.yaml", {"a": " top ", "b": "left"})
+    assert camera_names(CameraConfig(backend="rce", config=str(cfg))) == [
+        "top",
+        "left",
+    ]

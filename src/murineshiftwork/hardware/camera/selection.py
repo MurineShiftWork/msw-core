@@ -75,20 +75,24 @@ def parse_record_cameras(value: Any) -> list[str] | str:
     return list(dict.fromkeys(names))
 
 
-def rce_camera_names(ensemble_cfg_file: str | Path) -> dict[str, str]:
-    """Return ``{agent instance: camera name}`` from an RCE ensemble YAML.
-
-    Agents without a ``camera_config.description`` are left out.
-    """
+def _rce_agent_names(ensemble_cfg_file: str | Path) -> dict[str, str]:
+    """Return ``{agent instance: camera name}`` for every agent of an RCE ensemble
+    YAML, with ``""`` for an agent without a ``camera_config.description``."""
     data = yaml.safe_load(Path(ensemble_cfg_file).read_text(encoding="utf-8")) or {}
     agents = data.get("agents") or {}
     names: dict[str, str] = {}
     for instance, agent in agents.items():
         cam = (agent or {}).get("camera_config") or {}
-        desc = str(cam.get("description") or "").strip()
-        if desc:
-            names[str(instance)] = desc
+        names[str(instance)] = str(cam.get("description") or "").strip()
     return names
+
+
+def rce_camera_names(ensemble_cfg_file: str | Path) -> dict[str, str]:
+    """Return ``{agent instance: camera name}`` from an RCE ensemble YAML.
+
+    Agents without a ``camera_config.description`` are left out.
+    """
+    return {i: n for i, n in _rce_agent_names(ensemble_cfg_file).items() if n}
 
 
 def camera_names(cameras: CameraConfig, config_file_camera: str = "") -> list[str]:
@@ -100,8 +104,9 @@ def camera_names(cameras: CameraConfig, config_file_camera: str = "") -> list[st
 
     Raises:
         CameraSelectionError: If the cameras have no usable names: FLIR units
-            without names (or the ``n_cameras`` shorthand), a missing RCE ensemble
-            YAML, or a name used twice.
+            without names (or the ``n_cameras`` shorthand), RCE agents without a
+            ``camera_config.description``, a missing RCE ensemble YAML, or a name
+            used twice.
     """
     if cameras.backend == "flir_bonsai":
         if not cameras.cameras or not all(c.name for c in cameras.cameras):
@@ -117,7 +122,14 @@ def camera_names(cameras: CameraConfig, config_file_camera: str = "") -> list[st
                 f"cameras: RCE ensemble config not found ({cfg_file!r}); "
                 "cannot check the camera names"
             )
-        names = list(rce_camera_names(cfg_file).values())
+        agents = _rce_agent_names(cfg_file)
+        unnamed = sorted(i for i, n in agents.items() if not n)
+        if not agents or unnamed:
+            raise CameraSelectionError(
+                "cameras: to choose cameras per task, give every RCE agent a "
+                f"camera_config.description (unnamed: {unnamed})"
+            )
+        names = list(agents.values())
     else:
         raise CameraSelectionError(
             f"cameras: backend {cameras.backend!r} does not support choosing cameras"

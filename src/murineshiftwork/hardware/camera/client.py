@@ -91,12 +91,18 @@ def _finalize_camera_peer(
 # RCE adapter
 
 
+def _agent_camera_name(agent: Any) -> str:
+    """The camera name of an RCE agent: its ``camera_config.description``, stripped
+    as the name check in ``selection`` strips it."""
+    return str(getattr(agent.camera_config, "description", "") or "").strip()
+
+
 def _select_agents(agents: dict[str, Any], selected: list[str]) -> dict[str, Any]:
     """Keep the ensemble agents whose ``camera_config.description`` is selected."""
     kept = {
         name: agent
         for name, agent in agents.items()
-        if getattr(agent.camera_config, "description", "") in selected
+        if _agent_camera_name(agent) in selected
     }
     if not kept:
         raise ValueError(f"no RCE agent matches the selected cameras {selected}")
@@ -148,10 +154,7 @@ class RceConductorAdapter:
                 self._selected,
                 sorted(ensemble_cfg.agents),
             )
-        names = [
-            getattr(a.camera_config, "description", "")
-            for a in ensemble_cfg.agents.values()
-        ]
+        names = [_agent_camera_name(a) for a in ensemble_cfg.agents.values()]
         self._recorded = names if names and all(names) else None
         conductor_cfg = ConductorConfig(data_dir=self._output_dir)
         self._conductor = Conductor(config=conductor_cfg, ensemble_config=ensemble_cfg)

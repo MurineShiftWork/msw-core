@@ -185,3 +185,22 @@ def test_peer_registers_without_names_on_old_msw_io(monkeypatch, tmp_path):
     monkeypatch.setattr(client_mod, "append_acquisition_to_session", old_append)
     client_mod._register_camera_peer(str(tmp_path / _RCE), _RCE, ["top"])
     assert calls == [_RCE]
+
+
+def test_rce_selection_strips_agent_descriptions(fake_rce, tmp_path, peers):
+    p = tmp_path / "ens.yaml"
+    p.write_text(
+        yaml.safe_dump(
+            {
+                "agents": {
+                    "agent-1": {"camera_config": {"description": " top "}},
+                    "agent-2": {"camera_config": {"description": "left"}},
+                }
+            }
+        )
+    )
+    adapter = RceConductorAdapter(str(p), str(tmp_path), selected=["top"])
+    adapter.start()
+    adapter.initialize_acquisition(acqdir=str(tmp_path / _RCE), basename=_RCE)
+    assert fake_rce["agents"] == ["agent-1"]
+    assert peers == [(_RCE, {"cameras": ["top"]})]
