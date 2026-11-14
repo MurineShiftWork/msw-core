@@ -84,26 +84,40 @@ def _camera_errors(args_dict: dict, record_video: bool) -> list[str]:
     return errors
 
 
-def _camera_group_errors(group) -> list[str]:
+def camera_group_file_error(group) -> str:
+    """The file a camera group needs and does not find, or an empty string.
+
+    An RCE group needs its ensemble YAML (``settings.config``); a FLIR group needs
+    its ``bonsai_exe`` (or ``BONSAI_EXE``) when one is given.
+    """
     import os
 
-    from msw_plugin_api.camera import CameraConfigError
-
-    from murineshiftwork.hardware.camera.session import load_backend, unit_specs
-
     label = f"camera group {group.name!r}"
-    settings = dict(group.settings)
+    settings = group.settings
     if group.backend == "rce":
         cfg = str(settings.get("config") or "")
         if not cfg or not Path(cfg).expanduser().exists():
-            return [f"{label}: Camera config not found: {cfg!r}"]
+            return f"{label}: Camera config not found: {cfg!r}"
     if group.backend == "flir_bonsai":
         exe = str(settings.get("bonsai_exe") or "")
         source = "bonsai_exe"
         if not exe:
             exe, source = os.environ.get("BONSAI_EXE", "").strip(), "BONSAI_EXE"
         if exe and not Path(exe).exists():
-            return [f"{label}: Bonsai executable not found ({source}): {exe!r}"]
+            return f"{label}: Bonsai executable not found ({source}): {exe!r}"
+    return ""
+
+
+def _camera_group_errors(group) -> list[str]:
+    from msw_plugin_api.camera import CameraConfigError
+
+    from murineshiftwork.hardware.camera.session import load_backend, unit_specs
+
+    file_error = camera_group_file_error(group)
+    if file_error:
+        return [file_error]
+    label = f"camera group {group.name!r}"
+    settings = dict(group.settings)
     backend = None
     try:
         backend = load_backend(group.backend)
