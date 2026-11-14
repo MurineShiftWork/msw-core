@@ -282,3 +282,18 @@ def test_record_cameras_with_relative_camera_config(
     assert out["settings.task.patched"]["record_cameras"] == recorded
     assert out["cameras_config"].config == str(ensemble)
     assert out["cameras_config"].selected == selected
+
+
+def test_subject_record_cameras_ignored_on_rig_without_video(
+    run_evaluate, camera_setup
+):
+    camera_setup({"_test_flush_valves": {"record_video": False}})
+    _write_subject(
+        run_evaluate.config_dir,
+        "subj001",
+        task_overrides={"_test_flush_valves": {"record_cameras": ["front"]}},
+    )
+    out = run_evaluate(setup="rig1")
+    assert "record_cameras" not in out["settings.task.patched"]
+    assert "record_cameras" not in out["settings.task.provenance"]
+    assert out["cameras_config"].selected is None

@@ -479,10 +479,23 @@ def _resolve_record_cameras(args_dict: dict, patched: dict) -> None:
     from the resolver. Unset, the task records all cameras and nothing changes. The
     resolved list is written back to the task settings so the session YAML records
     it; ``all`` on cameras without usable names is dropped instead, as if unset.
+    With ``record_video`` off the setting is dropped unchecked, so a subject-level
+    choice does not refuse runs on rigs without those cameras.
     Raises before any hardware starts when a name is unknown or the list is empty.
     """
     value = patched.get(RECORD_CAMERAS_KEY)
     if value is None:
+        return
+    provenance = args_dict.get("settings.task.provenance", {})
+    if "record_video" in patched and not patched["record_video"]:
+        logging.info(
+            "record_video is off: ignoring %s=%r (from %s)",
+            RECORD_CAMERAS_KEY,
+            value,
+            provenance.get(RECORD_CAMERAS_KEY) or "unknown",
+        )
+        patched.pop(RECORD_CAMERAS_KEY, None)
+        provenance.pop(RECORD_CAMERAS_KEY, None)
         return
     # the copy whose ``config`` path is resolved against the config dir, not the raw
     # (possibly relative) path of the setup YAML
@@ -496,10 +509,10 @@ def _resolve_record_cameras(args_dict: dict, patched: dict) -> None:
     if recorded is None:
         # ``all`` on cameras without names: same as unset, so the task never sees it
         patched.pop(RECORD_CAMERAS_KEY, None)
-        args_dict.get("settings.task.provenance", {}).pop(RECORD_CAMERAS_KEY, None)
+        provenance.pop(RECORD_CAMERAS_KEY, None)
         return
     patched[RECORD_CAMERAS_KEY] = recorded
-    source = args_dict.get("settings.task.provenance", {}).get(RECORD_CAMERAS_KEY, "")
+    source = provenance.get(RECORD_CAMERAS_KEY, "")
     logging.info(
         "Recording cameras %s for task %r (from %s)",
         recorded,

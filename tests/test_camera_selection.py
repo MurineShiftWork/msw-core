@@ -229,3 +229,25 @@ def test_evaluate_refuses_bad_values_before_hardware(rce, value, match):
     patched = {"record_cameras": value}
     with pytest.raises(CameraSelectionError, match=match):
         _resolve_record_cameras(_args(rce, patched), patched)
+
+
+@pytest.mark.parametrize("value", [["front"], "all", ["top"]])
+def test_evaluate_ignores_record_cameras_without_video(rce, value):
+    """With record_video off the choice is dropped unchecked, even an unknown name."""
+    patched = {"record_video": False, "record_cameras": value}
+    args = _args(rce, patched)
+    _resolve_record_cameras(args, patched)
+    assert args["cameras_config"] is rce
+    assert "record_cameras" not in patched
+    assert "record_cameras" not in args["settings.task.provenance"]
+
+
+def test_evaluate_ignores_record_cameras_without_video_or_cameras():
+    patched = {"record_video": False, "record_cameras": ["top"]}
+    args = {
+        "task": "sequence",
+        "settings.task.patched": patched,
+        "settings.task.provenance": {"record_cameras": "subject:s.yaml"},
+    }
+    _resolve_record_cameras(args, patched)
+    assert "record_cameras" not in patched
