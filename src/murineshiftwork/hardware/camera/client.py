@@ -61,16 +61,8 @@ def _register_camera_peer(
         return
     container = Path(acq_dir).parent
     try:
-        if cameras:
-            try:
-                append_acquisition_to_session(
-                    container, basename, extra={"cameras": list(cameras)}
-                )
-                return
-            except TypeError:
-                # msw-io without per-entry extras: register without the names
-                log.warning("msw-io too old to record cameras on %s", basename)
-        append_acquisition_to_session(container, basename)
+        extra = {"cameras": list(cameras)} if cameras else None
+        append_acquisition_to_session(container, basename, extra=extra)
     except Exception:  # noqa: BLE001 - never let bookkeeping break acquisition
         log.warning("could not register camera peer %s", basename, exc_info=True)
 

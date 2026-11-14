@@ -174,17 +174,6 @@ def test_flir_refuses_selection_with_multi_camera_workflow(fake_flir, tmp_path):
     assert fake_flir == []
 
 
-def test_peer_registers_without_names_on_old_msw_io(monkeypatch, tmp_path):
-    calls: list[str] = []
-
-    def old_append(container, basename, started_at=None):
-        calls.append(basename)
-
-    monkeypatch.setattr(client_mod, "append_acquisition_to_session", old_append)
-    client_mod._register_camera_peer(str(tmp_path / _RCE), _RCE, ["top"])
-    assert calls == [_RCE]
-
-
 def test_rce_selection_strips_agent_descriptions(fake_rce, tmp_path, peers):
     p = tmp_path / "ens.yaml"
     p.write_text(
