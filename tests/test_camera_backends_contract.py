@@ -71,8 +71,9 @@ class FakeConductor:
     def start(self) -> None:
         pass
 
-    def setup_agents(self) -> None:
+    def setup_agents(self, raise_on_failure: bool = True):
         self.agents = {name: object() for name in self.ensemble_config.agents}
+        return self._ok()
 
     def agent_status(self):
         _, status, _ = self._models
