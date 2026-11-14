@@ -8,6 +8,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PrivateAttr,
     field_validator,
     model_validator,
 )
@@ -246,11 +247,26 @@ class CameraGroup(BaseModel):
     record: CameraRecordMode = "with_video"
     units: list[CameraUnit] = []
     settings: dict[str, Any] = {}
+    # The run's camera failure policy, set by the framework on the copy handed to a
+    # task (``cameras_config``) for the deprecated camera client. Private so a setup
+    # YAML cannot set it; empty means the client's default.
+    _failure_policy: str = PrivateAttr(default="")
 
     @field_validator("name")
     @classmethod
     def _valid_name(cls, value: str) -> str:
         return _check_camera_name("camera group", value)
+
+    @property
+    def failure_policy(self) -> str:
+        """The run's camera failure policy carried by this copy, or empty."""
+        return self._failure_policy
+
+    def with_failure_policy(self, policy: str) -> CameraGroup:
+        """Return a copy carrying the run's camera failure policy."""
+        copy = self.model_copy()
+        copy._failure_policy = policy
+        return copy
 
     @field_validator("settings", mode="before")
     @classmethod

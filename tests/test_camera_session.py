@@ -508,13 +508,37 @@ def test_make_camera_client_without_cameras(tmp_path):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         assert camera_client.make_camera_client(None) is None
-        missing = CameraGroup(name="rce", backend="rce", settings={"config": "no.yaml"})
-        assert camera_client.make_camera_client(missing) is None
         cfg = tmp_path / "camera.yaml"
         cfg.touch()
-        client = camera_client.make_camera_client(None, config_file_camera=str(cfg))
+        client = camera_client.make_camera_client(
+            None, config_file_camera=str(cfg), output_dir=str(tmp_path)
+        )
     assert client.group.backend == "rce"
-    assert client.group.settings == {"config": str(cfg)}
+    # the conductor saves its YAMLs under the output dir, as before camera groups
+    assert client.group.settings == {"config": str(cfg), "data_dir": str(tmp_path)}
+
+
+def test_make_camera_client_refuses_an_rce_group_without_its_config():
+    """A configured RCE camera whose ensemble YAML is gone must not run without
+    video."""
+    missing = CameraGroup(name="rce", backend="rce", settings={"config": "no.yaml"})
+    with (
+        pytest.warns(DeprecationWarning),
+        pytest.raises(CameraConfigError, match="'no.yaml'"),
+    ):
+        camera_client.make_camera_client(missing)
+
+
+def test_make_camera_client_honours_the_run_policy(session_paths):
+    FakeBackend.fail = {"preflight": {"top": "unplugged"}}
+    group = behaviour().with_failure_policy("continue")
+    with pytest.warns(DeprecationWarning):
+        client = camera_client.make_camera_client(group)
+    assert client.session.policy == "continue"
+    client.start()  # top is unplugged, back records
+    with pytest.warns(DeprecationWarning):
+        override = camera_client.make_camera_client(group, camera_failure="raise")
+    assert override.session.policy == "raise"
 
 
 def test_make_camera_client_raises_on_failed_start(session_paths):

@@ -310,3 +310,16 @@ def test_camera_failure_from_setup_and_run(run_evaluate, camera_setup):
     assert out["run_context"].camera_failure == "continue"
     assert out["run_context"].to_task_kwargs()["camera_failure"] == "continue"
     assert [g.name for g in out["camera_groups"]] == ["rce"]
+    # the copy the deprecated camera client gets carries the policy
+    assert out["cameras_config"].failure_policy == "continue"
+
+
+def test_rce_data_dir_defaults_to_out_path(run_evaluate, camera_setup, tmp_path):
+    """The conductor saves each acquisition's ensemble and conductor YAML under
+    the run's out_path, as before camera groups."""
+    camera_setup({})
+    _write_subject(run_evaluate.config_dir, "subj001")
+    out = run_evaluate(setup="rig1")
+    [group] = out["camera_groups"]
+    assert group.settings["data_dir"] == str(tmp_path / "data")
+    assert out["cameras_config"].settings["data_dir"] == str(tmp_path / "data")

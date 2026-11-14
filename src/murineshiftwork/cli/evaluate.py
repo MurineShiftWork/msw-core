@@ -465,8 +465,10 @@ def _resolve_camera_groups(args_dict: dict, setup_config) -> None:
     A relative ``settings.config`` path is resolved against the config dir. An RCE
     group without one takes ``--config-file-camera``, and a run without camera
     groups whose ``--config-file-camera`` exists gets one RCE group from it, as
-    before camera groups. ``config_file_camera`` is set to the RCE ensemble YAML
-    for tasks that read it directly.
+    before camera groups. An RCE group's ``data_dir`` defaults to the run's
+    ``out_path``, where the conductor saves each acquisition's ensemble and
+    conductor YAML. ``config_file_camera`` is set to the ensemble YAML of a video
+    RCE group for tasks that read it directly.
     """
     config_dir = args_dict.get("config_dir", "")
     cli_camera = args_dict.get("config_file_camera", "") or ""
@@ -485,7 +487,14 @@ def _resolve_camera_groups(args_dict: dict, setup_config) -> None:
             )
         if group.backend == "rce" and not settings.get("config") and cli_exists:
             settings["config"] = cli_camera
-        if group.backend == "rce" and settings.get("config") and not cli_exists:
+        if group.backend == "rce" and args_dict.get("out_path"):
+            settings.setdefault("data_dir", args_dict["out_path"])
+        if (
+            group.backend == "rce"
+            and group.record == "with_video"
+            and settings.get("config")
+            and not cli_exists
+        ):
             args_dict["config_file_camera"] = settings["config"]
             logging.debug(
                 f"Resolved camera config from SetupConfig: {settings['config']}"
@@ -497,11 +506,15 @@ def _resolve_camera_groups(args_dict: dict, setup_config) -> None:
 
 def _set_legacy_cameras_config(args_dict: dict) -> None:
     """``cameras_config``: the one group the deprecated ``make_camera_client`` drives
-    (the first group recording with video), or None."""
+    (the first group recording with video), or None.
+
+    The copy carries the run's camera failure policy, so the shim applies it
+    without the task passing it."""
     groups = args_dict.get("camera_groups") or []
-    args_dict["cameras_config"] = next(
-        (g for g in groups if g.record == "with_video"), None
-    )
+    group = next((g for g in groups if g.record == "with_video"), None)
+    if group is not None and args_dict.get("camera_failure"):
+        group = group.with_failure_policy(args_dict["camera_failure"])
+    args_dict["cameras_config"] = group
 
 
 def _resolve_camera_failure(args_dict: dict, setup_config) -> None:
@@ -510,6 +523,7 @@ def _resolve_camera_failure(args_dict: dict, setup_config) -> None:
     args_dict["camera_failure"] = value or (
         setup_config.camera_failure if setup_config is not None else "raise"
     )
+    _set_legacy_cameras_config(args_dict)
 
 
 def _resolve_record_cameras(args_dict: dict, patched: dict) -> None:
