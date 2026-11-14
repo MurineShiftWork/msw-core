@@ -106,6 +106,12 @@ class RceConductorAdapter:
 
     All rpi_camera_ensemble imports are deferred until start() is called so
     that the package is not required on machines that use FLIR cameras only.
+
+    Conductor commands raise when agents fail (``EnsembleError``, a ``RuntimeError``).
+    The adapter lets that propagate so the session fails visibly, after marking the
+    camera peer ``failed`` in the session manifest. A failed init, preview or record
+    finalises the peer at once; ``stop_acquisition`` always finalises it, as
+    ``complete`` only when the stop succeeded. The peer is finalised once.
     """
 
     #: namespace acq_type for this backend; callers use it to name the camera acquisition
@@ -127,6 +133,25 @@ class RceConductorAdapter:
         self._conductor: Any = None
         self._acq_dir: str = ""
         self._basename: str = ""
+        self._peer_finalized = False
+
+    def _finalize_peer(self, status: str) -> None:
+        if not self._peer_finalized:
+            self._peer_finalized = True
+            _finalize_camera_peer(self._acq_dir, self._basename, status=status)
+
+    def _command(self, method: str, **kwargs: Any) -> None:
+        """Run a conductor command; on any failure mark the peer failed and re-raise."""
+        if self._conductor is None:
+            return
+        ok = False
+        try:
+            getattr(self._conductor, method)(**kwargs)
+            ok = True
+        finally:
+            if not ok:
+                log.error("RCE %s failed; camera peer marked failed", method)
+                self._finalize_peer("failed")
 
     def start(self) -> None:
         from rpi_camera_ensemble.conductor.conductor import Conductor
@@ -174,25 +199,28 @@ class RceConductorAdapter:
         # CWD-relative path).
         self._acq_dir = acqdir
         self._basename = basename
+        self._peer_finalized = False
         _register_camera_peer(acqdir, basename, self._recorded)
-        if self._conductor is not None:
-            self._conductor.initialize_acquisition(
-                acquisition_path=acquisition_path,
-                acquisition_name=acquisition_name,
-            )
+        self._command(
+            "initialize_acquisition",
+            acquisition_path=acquisition_path,
+            acquisition_name=acquisition_name,
+        )
 
     def start_preview(self) -> None:
-        if self._conductor is not None:
-            self._conductor.start_preview()
+        self._command("start_preview")
 
     def start_recording(self) -> None:
-        if self._conductor is not None:
-            self._conductor.start_recording()
+        self._command("start_recording")
 
     def stop_acquisition(self) -> None:
-        if self._conductor is not None:
-            self._conductor.stop_acquisition()
-        _finalize_camera_peer(self._acq_dir, self._basename)
+        status = "failed"
+        try:
+            if self._conductor is not None:
+                self._conductor.stop_acquisition()
+            status = "complete"
+        finally:
+            self._finalize_peer(status)
 
     def stop(self) -> None:
         if self._conductor is not None:
