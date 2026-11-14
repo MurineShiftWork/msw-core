@@ -38,12 +38,14 @@ class FakeBackend:
     """A camera backend whose cameras fail on demand.
 
     ``fail[phase]`` maps a camera name to the error it reports in that phase;
-    ``raises`` lists the phases that raise instead of reporting.
+    ``raises`` lists the phases that raise instead of reporting; ``throw`` maps
+    ``(acq_type, phase)`` to an exception that one backend raises.
     """
 
     instances: list[FakeBackend] = []
     fail: dict[str, dict[str, str]] = {}
     raises: set[str] = set()
+    throw: dict[tuple[str, str], BaseException] = {}
 
     def __init__(self, acq_type: str, version: str = "1.2.3") -> None:
         self.acq_type = acq_type
@@ -56,6 +58,8 @@ class FakeBackend:
     def _results(self, phase: str, ok_state: str) -> list[UnitResult]:
         if phase in self.raises:
             raise RuntimeError(f"{phase} exploded")
+        if (self.acq_type, phase) in self.throw:
+            raise self.throw[self.acq_type, phase]
         errors = self.fail.get(phase, {})
         return [
             UnitResult(
@@ -105,6 +109,7 @@ def backends(monkeypatch):
     FakeBackend.instances = []
     FakeBackend.fail = {}
     FakeBackend.raises = set()
+    FakeBackend.throw = {}
     eps = [
         _EntryPoint("flir_bonsai", lambda: FakeBackend("video_flir")),
         _EntryPoint("rce", lambda: FakeBackend("video_rce", "0.7.0")),
@@ -519,3 +524,167 @@ def test_make_camera_client_raises_on_failed_start(session_paths):
     with pytest.raises(CameraStartError):
         client.start()
     assert by_backend("video_flir").calls[-1] == ("close",)
+
+
+# --- interrupts and failing stops ---
+
+
+def _calls(acq_type: str) -> list[str]:
+    return [c[0] for c in by_backend(acq_type).calls]
+
+
+def test_interrupt_in_preflight_closes_every_backend():
+    FakeBackend.throw = {("video_flir", "preflight"): KeyboardInterrupt()}
+    cams = CameraSession([behaviour(), pupil()])
+    with pytest.raises(KeyboardInterrupt):
+        cams.open()
+    for fake in FakeBackend.instances:
+        assert fake.calls[-1] == ("close",)
+
+
+def test_interrupt_in_start_stops_what_started(session_paths):
+    FakeBackend.throw = {("video_rce", "start"): KeyboardInterrupt()}
+    cams = CameraSession([behaviour(), pupil()])
+    cams.open()
+    with pytest.raises(KeyboardInterrupt):
+        cams.start(session_paths)
+    assert _calls("video_flir")[-2:] == ["stop", "close"]
+    assert _calls("video_rce")[-1] == "close"
+    statuses = {p["group"]: p["status"] for p in peers(session_paths).values()}
+    assert statuses["behaviour"] == "complete"
+
+
+@pytest.mark.parametrize("exc", [KeyboardInterrupt(), SystemExit(2)])
+def test_a_group_raising_in_stop_does_not_leave_the_others_running(session_paths, exc):
+    FakeBackend.throw = {("video_flir", "stop"): exc}
+    cams = CameraSession([behaviour(), pupil()])
+    cams.start(session_paths)
+    with pytest.raises(type(exc)):
+        cams.stop("completed")
+    # the other group is stopped, every backend closed, the record written
+    assert _calls("video_rce")[-2:] == ["stop", "close"]
+    assert _calls("video_flir")[-1] == "close"
+    statuses = {p["group"]: p["status"] for p in peers(session_paths).values()}
+    assert statuses == {"behaviour": "failed", "pupil": "complete"}
+    record = read_cameras_record(session_paths["session_folder"])
+    assert [g.status for g in record.groups] == ["failed", "complete"]
+    # a second stop tries the interrupted group again, and only that one
+    FakeBackend.throw = {}
+    cams.stop("completed")
+    assert _calls("video_flir").count("stop") == 2
+    assert _calls("video_rce").count("stop") == 1
+    cams.stop("completed")
+    assert _calls("video_flir").count("stop") == 2
+
+
+def test_stop_survives_a_backend_reporting_no_file_list(session_paths, monkeypatch):
+    def stop(self, reason):
+        self.calls.append(("stop", reason))
+        return [
+            UnitResult(name=u.name, ok=True, state=UNIT_STOPPED, files=None, extra=None)
+            for u in self.units
+        ]
+
+    cams = CameraSession([behaviour(), pupil()])
+    cams.start(session_paths)
+    monkeypatch.setattr(FakeBackend, "stop", stop)
+    cams.stop()
+    for fake in FakeBackend.instances:
+        assert fake.calls[-1] == ("close",)
+    statuses = {p["group"]: p["status"] for p in peers(session_paths).values()}
+    assert statuses == {"behaviour": "complete", "pupil": "complete"}
+
+
+def test_start_twice_starts_each_group_once(session_paths):
+    cams = CameraSession([behaviour(), pupil()])
+    cams.start(session_paths)
+    cams.start(session_paths)
+    assert _calls("video_flir").count("start") == 1
+    assert _calls("video_rce").count("start") == 1
+    assert len(peers(session_paths)) == 2
+    cams.stop()
+
+
+def test_raise_starts_no_group_after_a_failed_one(session_paths):
+    FakeBackend.fail = {"start": {"top": "no frames"}}
+    cams = CameraSession([behaviour(), pupil()])
+    cams.open()
+    with pytest.raises(CameraStartError, match="behaviour/top"):
+        cams.start(session_paths)
+    assert "start" not in _calls("video_rce")
+    assert _calls("video_rce")[-1] == "close"
+    assert [p["group"] for p in peers(session_paths).values()] == ["behaviour"]
+
+
+def test_no_start_after_stop(session_paths):
+    cams = CameraSession([behaviour()])
+    cams.open()
+    cams.stop()
+    cams.start(session_paths)
+    assert "start" not in _calls("video_flir")
+
+
+def test_unit_files_are_those_of_the_latest_phase_reporting_any(session_paths):
+    reported = {"start": ["top.avi.part"], "stop": ["top.avi", "top.csv"]}
+
+    def results(self, phase, ok_state):
+        return [
+            UnitResult(
+                name=u.name,
+                ok=True,
+                state=ok_state,
+                files=list(reported.get(phase, [])) if u.name == "top" else [],
+            )
+            for u in self.units
+        ]
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(FakeBackend, "_results", results)
+        cams = CameraSession([behaviour()])
+        cams.start(session_paths)
+        record = cams.record()
+        assert record.groups[0].units[0].files == ["top.avi.part"]
+        cams.stop()
+    [group] = read_cameras_record(session_paths["session_folder"]).groups
+    top, back = group.units
+    assert top.files == ["top.avi", "top.csv"] and back.files == []
+
+
+def test_remote_host_fills_an_empty_hw_id(session_paths, monkeypatch):
+    real = FakeBackend._results
+
+    def results(self, phase, ok_state):
+        out = real(self, phase, ok_state)
+        for r in out:
+            r.extra = {**r.extra, "host": "pi-eye.example"}
+        return out
+
+    monkeypatch.setattr(FakeBackend, "_results", results)
+    with CameraSession([pupil(), behaviour()]) as cams:
+        cams.start(session_paths)
+    rce, flir = read_cameras_record(session_paths["session_folder"]).groups
+    assert rce.units[0].hw_id == "pi-eye.example"
+    assert flir.units[0].hw_id == "1801"  # a configured hw_id is kept
+
+
+def test_started_anchor_after_the_backend_returned(session_paths):
+    with CameraSession([behaviour()]) as cams:
+        cams.start(session_paths)
+    [group] = read_cameras_record(session_paths["session_folder"]).groups
+    assert group.start.monotonic_ns <= group.started.monotonic_ns
+    assert group.started.monotonic_ns <= group.stop.monotonic_ns
+
+
+def test_backend_that_cannot_be_imported_names_what_to_install(monkeypatch):
+    class _Broken:
+        name, value = "rce", "rpi_camera_ensemble.integrations.msw:RceBackend"
+
+        def load(self):
+            raise ModuleNotFoundError("No module named 'aiohttp'")
+
+    monkeypatch.setattr("msw_plugin_api.camera.entry_points", lambda group: [_Broken()])
+    with pytest.raises(CameraConfigError) as exc:
+        CameraSession([pupil()]).open()
+    msg = str(exc.value)
+    assert "cannot be imported (No module named 'aiohttp')" in msg
+    assert "rpi-camera-ensemble[msw]>=0.9.0" in msg

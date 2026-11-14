@@ -3,7 +3,8 @@
 ``CamerasRecord`` is written as a self-contained top-level ``cameras:`` block in the
 behaviour acquisition's ``acquisition_manifest.yaml``. It holds the failure policy and,
 per camera group, the backend and its version, the camera acquisition basename, clock
-anchors at start and stop, and the final state of every camera.
+anchors (``start`` before the backend is asked to start, ``started`` once it returned,
+``stop`` once it stopped), and the final state of every camera.
 
 Clock anchors pair the wall clock (``time.time_ns`` and its ISO form) with the
 monotonic clock (``time.monotonic_ns``) read at the same instant, so camera timestamps
@@ -81,6 +82,7 @@ class CameraGroupRecord(BaseModel):
     basename: str = ""
     status: str = ""
     start: ClockAnchor | None = None
+    started: ClockAnchor | None = None
     stop: ClockAnchor | None = None
     units: list[CameraUnitRecord] = Field(default_factory=list)
 

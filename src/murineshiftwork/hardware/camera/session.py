@@ -16,11 +16,16 @@ Backends report one ``UnitResult`` per camera and never raise for a camera failu
 the session applies the run's failure policy:
 
 - ``raise``: any camera not ok at preflight or start stops every started group,
-  finalises their peers and raises ``CameraStartError`` listing the cameras.
+  finalises their peers and raises ``CameraStartError`` listing the cameras. No
+  further group is started once one reports a failure.
 - ``continue``: each failed camera is logged as a warning and the run goes on; a
   group left without a working camera is stopped.
 
 An exception escaping a backend counts as every camera of that group failing.
+
+``stop`` stops and closes every group even when one of them raises (a
+``KeyboardInterrupt`` included), writes the record, then re-raises the first such
+exception.
 
 Each started group is a peer acquisition in ``session_manifest.yaml`` (finalised as
 ``complete``, ``partial`` or ``failed``) and the behaviour acquisition's
@@ -73,8 +78,8 @@ STATUS_FAILED = "failed"
 
 #: what to install for the first-party backends
 BACKEND_PACKAGES = {
-    "flir_bonsai": "msw-flir-bonsai (extra: murineshiftwork[flir])",
-    "rce": "rpi-camera-ensemble (extra: murineshiftwork[rce])",
+    "flir_bonsai": "msw-flir-bonsai>=0.6.0 (extra: murineshiftwork[flir])",
+    "rce": "rpi-camera-ensemble[msw]>=0.9.0 (extra: murineshiftwork[rce])",
 }
 
 
@@ -104,13 +109,19 @@ def load_backend(name: str) -> CameraBackend:
     """Create the installed camera backend ``name``.
 
     Raises:
-        CameraConfigError: The backend is not installed, or is not a CameraBackend.
+        CameraConfigError: The backend is not installed, cannot be imported (a
+            missing optional dependency, an old version), or is not a CameraBackend.
     """
     try:
         return load_camera_backend(name)
     except LookupError as exc:
         raise CameraConfigError(
             f"camera backend {name!r} is not installed: {backend_install_hint(name)}"
+        ) from exc
+    except ImportError as exc:
+        raise CameraConfigError(
+            f"camera backend {name!r} cannot be imported ({exc}): "
+            f"{backend_install_hint(name)}"
         ) from exc
     except TypeError as exc:
         raise CameraConfigError(str(exc)) from exc
@@ -137,6 +148,7 @@ class _GroupRun:
     skipped: bool = False
     started: bool = False
     stopped: bool = False
+    closed: bool = False
     acqdir: str = ""
     basename: str = ""
     record: CameraGroupRecord = field(default_factory=CameraGroupRecord)
@@ -186,7 +198,8 @@ class CameraSession:
         self._load = backend_loader
         self._runs = [_GroupRun(group=g, specs=unit_specs(g)) for g in groups]
         self._opened = False
-        self._closed = False
+        self._stopping = False  # stop was called: start nothing more
+        self._closed = False  # every group stopped and closed
         self._host_folder: str = ""
 
     # -- construction ------------------------------------------------------
@@ -253,15 +266,21 @@ class CameraSession:
             self.stop("camera configuration failed")
             raise
         failures: list[tuple[str, UnitResult]] = []
-        for run in self._runs:
-            results = self._call(run, "preflight")
-            failures += self._apply(run, results, "preflight", log_ok=False)
+        try:
+            for run in self._runs:
+                results = self._call(run, "preflight")
+                failures += self._apply(run, results, "preflight", log_ok=False)
+        except BaseException:
+            self.stop("camera preflight failed")
+            raise
         self._enforce("preflight", failures)
 
     def start(self, session_paths: dict[str, Any]) -> None:
         """Start every group into its own camera acquisition next to the behaviour one.
 
         ``session_paths`` is the behaviour acquisition's ``TaskProcess.session_paths``.
+
+        Groups already started are left alone, so a second call starts nothing.
 
         Raises:
             CameraStartError: A camera failed to start under the ``raise`` policy.
@@ -275,6 +294,8 @@ class CameraSession:
         targets: dict[str, CameraTarget] = {}
         try:
             for run in self._active():
+                if run.started:
+                    continue
                 paths = generate_session_paths(
                     subject=sp["subject"],
                     task=sp["task"],
@@ -300,19 +321,25 @@ class CameraSession:
     ) -> None:
         """Start groups into already-built targets.
 
+        Groups already started are skipped. Under ``raise``, no further group is
+        started once one reports a failed camera.
+
         Args:
             targets: Target per group name.
             host_folder: Behaviour acquisition folder that receives the camera
                 record; empty to write none.
         """
-        if self._closed:
+        if self._stopping:
             return
         self._host_folder = host_folder
         failures: list[tuple[str, UnitResult]] = []
         try:
             for run in self._active():
-                if run.group.name in targets:
-                    failures += self._start_group(run, targets[run.group.name])
+                if run.started or run.group.name not in targets:
+                    continue
+                failures += self._start_group(run, targets[run.group.name])
+                if failures and self.policy == POLICY_RAISE:
+                    break
         except BaseException:
             self.stop("camera start failed")
             raise
@@ -321,22 +348,37 @@ class CameraSession:
 
     def stop(self, reason: str = "completed") -> None:
         """Stop every started group, finalise the peers, close the backends and
-        write the camera record. Safe to call repeatedly."""
+        write the camera record. Safe to call repeatedly.
+
+        Every group is stopped and closed even when another raised; the first
+        exception that escaped (``KeyboardInterrupt`` included) is re-raised once
+        the record is written. A group whose stop or close was interrupted is
+        tried again by the next call.
+        """
         if self._closed or not self._runs:
             return
-        self._closed = True
+        self._stopping = True
+        first: BaseException | None = None
         for run in self._runs:
-            if run.started and not run.stopped:
-                self._stop_group(run, reason)
-        for run in self._runs:
-            if run.backend is not None:
+            try:
+                if run.started and not run.stopped:
+                    self._stop_group(run, reason)
+            except BaseException as exc:  # noqa: BLE001 - re-raised below
+                log.warning("camera group %s: stop failed", run.label, exc_info=True)
+                first = first or exc
+            finally:
                 try:
-                    run.backend.close()
-                except Exception:  # noqa: BLE001 - closing must not mask the stop
-                    log.warning(
-                        "camera group %s: close failed", run.label, exc_info=True
-                    )
-        self._write_record()
+                    self._close_group(run)
+                except BaseException as exc:  # noqa: BLE001 - re-raised below
+                    first = first or exc
+        self._closed = all(
+            r.closed and (r.stopped or not r.started) for r in self._runs
+        )
+        try:
+            self._write_record()
+        finally:
+            if first is not None:
+                raise first
 
     def record(self) -> CamerasRecord:
         """The camera record as it stands."""
@@ -369,6 +411,16 @@ class CameraSession:
             run.backend = self._load(run.group.backend)
         return run.backend
 
+    def _close_group(self, run: _GroupRun) -> None:
+        if run.closed:
+            return
+        if run.backend is not None:
+            try:
+                run.backend.close()
+            except Exception:  # noqa: BLE001 - closing must not mask the stop
+                log.warning("camera group %s: close failed", run.label, exc_info=True)
+        run.closed = True
+
     def _active(self) -> list[_GroupRun]:
         return [r for r in self._runs if not r.skipped]
 
@@ -400,7 +452,12 @@ class CameraSession:
         log_ok: bool = True,
     ) -> list[tuple[str, UnitResult]]:
         """Record results; return the failed ones (a configured camera with no
-        result counts as failed)."""
+        result counts as failed).
+
+        A unit's ``files`` are those of the latest phase that reported any, and
+        an empty ``hw_id`` is taken from the ``host`` a remote backend reports.
+        """
+        results = [r for r in results or [] if r is not None]
         reported = {r.name for r in results}
         results = results + [
             UnitResult(
@@ -420,8 +477,11 @@ class CameraSession:
                 r.name, CameraUnitRecord(name=r.name, hw_id=hw_ids.get(r.name, ""))
             )
             rec.state = r.state
-            rec.files = list(dict.fromkeys(rec.files + list(r.files)))
-            rec.extra.update(r.extra)
+            if r.files:
+                rec.files = list(dict.fromkeys(r.files))
+            rec.extra.update(r.extra or {})
+            if not rec.hw_id and rec.extra.get("host"):
+                rec.hw_id = str(rec.extra["host"])
             if not r.ok:
                 run.failed.add(r.name)
                 failures.append((run.label, r))
@@ -466,14 +526,29 @@ class CameraSession:
         self._register_peer(run, backend)
         run.record.start = ClockAnchor.now()
         run.started = True
-        return self._apply(run, self._call(run, "start", target), "start")
+        results = self._call(run, "start", target)
+        run.record.started = ClockAnchor.now()
+        return self._apply(run, results, "start")
 
     def _stop_group(self, run: _GroupRun, reason: str) -> None:
-        run.stopped = True
-        results = self._call(run, "stop", reason)
-        run.record.stop = ClockAnchor.now()
-        self._apply(run, results, "stop")
-        self._finalize_peer(run)
+        """Stop one group; its peer is finalised whatever happens.
+
+        An exception escaping the backend's ``stop`` (only a ``BaseException``
+        does, ``_call`` turns the rest into results) marks the group failed and
+        leaves it not stopped, so the next ``stop`` tries again.
+        """
+        try:
+            try:
+                results = self._call(run, "stop", reason)
+            except BaseException:
+                run.raised = True
+                raise
+            finally:
+                run.record.stop = ClockAnchor.now()
+            run.stopped = True
+            self._apply(run, results, "stop")
+        finally:
+            self._finalize_peer(run)
 
     def _register_peer(self, run: _GroupRun, backend: CameraBackend) -> None:
         extra = {
@@ -493,6 +568,12 @@ class CameraSession:
             )
 
     def _finalize_peer(self, run: _GroupRun) -> None:
+        """Finalise the group's session-manifest peer as ``complete``, ``partial``
+        (some cameras failed, the others recorded) or ``failed``.
+
+        ``partial`` is a camera peer status only; behaviour acquisitions end
+        ``complete`` or ``failed``.
+        """
         try:
             finalize_acquisition_in_session(
                 Path(run.acqdir).parent, run.basename, status=run.status
