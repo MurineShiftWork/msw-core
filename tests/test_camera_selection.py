@@ -288,3 +288,11 @@ def test_selection_survives_a_copy_and_pickling(rce):
     narrowed = select_cameras(rce, ["top"])
     assert narrowed.model_copy(update={"config": "x.yaml"}).selected == ["top"]
     assert pickle.loads(pickle.dumps(narrowed)).selected == ["top"]
+
+
+@pytest.mark.parametrize(
+    "value", ["group:overhead", ["role:face"], "top,group:side", "a:b"]
+)
+def test_prefixed_values_are_reserved(value):
+    with pytest.raises(CameraSelectionError, match="group or role is not supported"):
+        parse_record_cameras(value)

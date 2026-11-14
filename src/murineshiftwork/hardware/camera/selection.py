@@ -10,6 +10,10 @@ A camera's name is its view: the FLIR ``CameraUnit.name`` or the RCE agent's
 - ``all``: the task records every camera of the setup's camera config;
 - a list of names: the task records only those cameras.
 
+Values are camera names, as a YAML list (``[top, bottom]``) or a comma-separated
+string (``top,bottom``). Names containing ``:`` are refused: the ``group:`` and
+``role:`` prefixes are reserved for choosing cameras by group or role later.
+
 The choice is resolved and checked once, before any hardware starts: an unknown
 name, an empty list or a setup whose cameras cannot be named refuses the run.
 For a list of names the task receives a copy of the setup's ``CameraConfig`` with
@@ -43,11 +47,14 @@ class CameraSelectionError(ValueError):
 def parse_record_cameras(value: Any) -> list[str] | str:
     """Normalise a ``record_cameras`` value to a list of names, or ``"all"``.
 
-    Accepts ``all``, a list of strings or a string as given on the command line
-    (``top``, ``top,bottom`` or ``[top, bottom]``).
+    Accepts ``all``, a list of camera names or a string as given on the command
+    line (``top``, ``top,bottom`` or ``[top, bottom]``). A name may not contain
+    ``:``: ``group:<name>`` and ``role:<name>`` are reserved for selecting cameras
+    by group or role, which is not supported yet.
 
     Raises:
-        CameraSelectionError: If the value is empty or not strings.
+        CameraSelectionError: If the value is empty, not strings, or a name
+            contains ``:``.
     """
     if isinstance(value, str) and value.strip() == RECORD_ALL:
         return RECORD_ALL
@@ -71,6 +78,12 @@ def parse_record_cameras(value: Any) -> list[str] | str:
         raise CameraSelectionError(
             f"{RECORD_CAMERAS_KEY} is empty; to record no video, set the task "
             "setting record_video: false"
+        )
+    prefixed = [n for n in names if ":" in n]
+    if prefixed:
+        raise CameraSelectionError(
+            f"{RECORD_CAMERAS_KEY} {prefixed}: selection by group or role is not "
+            "supported yet; list camera names"
         )
     return list(dict.fromkeys(names))
 
