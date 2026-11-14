@@ -46,17 +46,31 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-def _register_camera_peer(acq_dir: str, basename: str) -> None:
+def _register_camera_peer(
+    acq_dir: str, basename: str, cameras: list[str] | None = None
+) -> None:
     """Register a camera acquisition as a peer in its session_manifest.yaml.
 
     The camera acquisition dir sits inside the session container (built with
-    ``linked_to=<container>``), so the container is its parent. Registration is
-    best-effort: a manifest failure must never interrupt recording.
+    ``linked_to=<container>``), so the container is its parent. ``cameras`` (the
+    names of the cameras recorded, when known) is stored on the entry.
+    Registration is best-effort: a manifest failure must never interrupt
+    recording.
     """
     if not acq_dir or not basename:
         return
+    container = Path(acq_dir).parent
     try:
-        append_acquisition_to_session(Path(acq_dir).parent, basename)
+        if cameras:
+            try:
+                append_acquisition_to_session(
+                    container, basename, extra={"cameras": list(cameras)}
+                )
+                return
+            except TypeError:
+                # msw-io without per-entry extras: register without the names
+                log.warning("msw-io too old to record cameras on %s", basename)
+        append_acquisition_to_session(container, basename)
     except Exception:  # noqa: BLE001 - never let bookkeeping break acquisition
         log.warning("could not register camera peer %s", basename, exc_info=True)
 
@@ -77,6 +91,18 @@ def _finalize_camera_peer(
 # RCE adapter
 
 
+def _select_agents(agents: dict[str, Any], selected: list[str]) -> dict[str, Any]:
+    """Keep the ensemble agents whose ``camera_config.description`` is selected."""
+    kept = {
+        name: agent
+        for name, agent in agents.items()
+        if getattr(agent.camera_config, "description", "") in selected
+    }
+    if not kept:
+        raise ValueError(f"no RCE agent matches the selected cameras {selected}")
+    return kept
+
+
 class RceConductorAdapter:
     """Wrap rpi_camera_ensemble.Conductor with the shared camera client API.
 
@@ -88,9 +114,18 @@ class RceConductorAdapter:
     #: (do NOT hardcode video_flir in tasks - the backend is setup-dependent).
     acq_type: str = "video_rce"
 
-    def __init__(self, ensemble_cfg_file: str, output_dir: str) -> None:
+    def __init__(
+        self,
+        ensemble_cfg_file: str,
+        output_dir: str,
+        selected: list[str] | None = None,
+    ) -> None:
         self._ensemble_cfg_file = ensemble_cfg_file
         self._output_dir = output_dir
+        # camera names (agent camera_config.description) to record; None = all agents
+        self._selected = list(selected) if selected is not None else None
+        # names written on the manifest peer entry; filled from the ensemble in start()
+        self._recorded: list[str] | None = self._selected
         self._conductor: Any = None
         self._acq_dir: str = ""
         self._basename: str = ""
@@ -103,6 +138,21 @@ class RceConductorAdapter:
         from murineshiftwork.logic.log import suppress_third_party_console_handlers
 
         ensemble_cfg = EnsembleAcquisitionConfig.from_yaml(path=self._ensemble_cfg_file)
+        if self._selected is not None:
+            # unselected agents are never contacted (setup, preview or recording)
+            ensemble_cfg = ensemble_cfg.model_copy(
+                update={"agents": _select_agents(ensemble_cfg.agents, self._selected)}
+            )
+            log.info(
+                "Camera: RCE recording %s (agents %s)",
+                self._selected,
+                sorted(ensemble_cfg.agents),
+            )
+        names = [
+            getattr(a.camera_config, "description", "")
+            for a in ensemble_cfg.agents.values()
+        ]
+        self._recorded = names if names and all(names) else None
         conductor_cfg = ConductorConfig(data_dir=self._output_dir)
         self._conductor = Conductor(config=conductor_cfg, ensemble_config=ensemble_cfg)
         suppress_third_party_console_handlers()
@@ -129,7 +179,7 @@ class RceConductorAdapter:
         # CWD-relative path).
         self._acq_dir = acqdir
         self._basename = basename
-        _register_camera_peer(acqdir, basename)
+        _register_camera_peer(acqdir, basename, self._recorded)
         if self._conductor is not None:
             self._conductor.initialize_acquisition(
                 acquisition_path=acquisition_path,
@@ -210,7 +260,17 @@ class FlirBonsaiClient:
         self._acqdir = acqdir
         self._basename = basename
         log.debug(f"FlirBonsaiClient: acqdir={acqdir!r} basename={basename!r}")
-        _register_camera_peer(acqdir, basename)
+        _register_camera_peer(acqdir, basename, self._recorded_names())
+
+    def _recorded_names(self) -> list[str] | None:
+        """Names of the cameras this client records, or None if they are unnamed."""
+        cfg = self._config
+        if cfg is None:
+            return None
+        if cfg.selected is not None:
+            return list(cfg.selected)
+        names = [c.name for c in cfg.cameras]
+        return names if names and all(names) else None
 
     def start_preview(self) -> None:
         pass
@@ -230,6 +290,14 @@ class FlirBonsaiClient:
                 for i in range(cfg.n_cameras)
             ]
         )
+        if cfg.selected is not None:
+            if not workflow.endswith("-1cam"):
+                raise RuntimeError(
+                    f"FlirBonsaiClient: workflow {workflow!r} records several cameras "
+                    "in one process; choosing cameras needs a -1cam workflow"
+                )
+            # unselected cameras get no Bonsai process
+            cameras = [c for c in cameras if getattr(c, "name", "") in cfg.selected]
 
         runners = []
         for cam in cameras:
@@ -309,7 +377,9 @@ def make_camera_client(
         cfg_file = cameras_config.config or config_file_camera
         if cfg_file and Path(cfg_file).exists():
             log.debug(f"Camera: RCE backend, config={cfg_file}")
-            return RceConductorAdapter(cfg_file, output_dir)
+            return RceConductorAdapter(
+                cfg_file, output_dir, selected=cameras_config.selected
+            )
         log.info(
             "Camera: RCE backend selected but no config file found: running without video"
         )
