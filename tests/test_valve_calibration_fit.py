@@ -211,5 +211,17 @@ def test_ts_fit_model_override_applies_to_empty_fallback():
     patched: dict = {"FIT_MODEL": "linear"}
     _inject_valve_calibration(cfg, patched)
     # The fallback path injects a callable; it should not raise.
-    s = patched["valve_s_for_ul"](5.0)
+    s = patched["valve_s_for_ul"](1, 5.0)
     assert isinstance(s, float)
+
+
+def test_fallback_takes_port_then_volume():
+    """The fallback has the same (port, volume_ul) signature as a calibrated setup."""
+    from murineshiftwork.logic.config._defaults import _FALLBACK_VALVE_CALIBRATION
+
+    cfg = SetupConfig(name="rig_empty", calibrations=Calibrations())
+    patched: dict = {}
+    _inject_valve_calibration(cfg, patched)
+    expected = _FALLBACK_VALVE_CALIBRATION.s_for_ul(5.0)
+    assert patched["valve_s_for_ul"](1, 5.0) == expected
+    assert patched["valve_s_for_ul"](3, 5.0) == expected
