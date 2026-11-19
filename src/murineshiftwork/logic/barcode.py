@@ -70,14 +70,18 @@ class BarcodeTTL(_BarcodeTTL):
     """``ttl_barcoder.BarcodeTTL`` that records its settings when a barcode is sent.
 
     ``prepare`` is what tasks call before sending a barcode; the first call with
-    each distinct config reports it to the session (``set_barcode_sink``).
+    each distinct config reports it to the session (``set_barcode_sink``), before
+    the wall time is captured.
     """
 
     def prepare(self) -> tuple[int, float, list[tuple[bool, float]]]:
-        """Capture wall time and return (barcode_value, wall_time, timing_sequence)."""
-        result = super().prepare()
+        """Capture wall time and return (barcode_value, wall_time, timing_sequence).
+
+        The settings are recorded first, so the session file write never sits between
+        the captured wall time and the barcode going out.
+        """
         _note_sent(self.config)
-        return result
+        return super().prepare()
 
 
 # Per-task TTL barcode identifier sequences.

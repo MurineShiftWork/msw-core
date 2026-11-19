@@ -58,3 +58,22 @@ def test_written_to_session_yaml(tmp_path):
         barcode_record(BarcodeConfig(bit_duration_ms=100, init_duration_ms=100))
     ]
     assert data["barcodes"][0]["bit_order"] == "lsb_first"
+
+
+def test_recorded_before_the_wall_time_is_taken(monkeypatch):
+    from ttl_barcoder.core.barcode_ttl import BarcodeTTL as Base
+
+    order: list[str] = []
+    real = Base.prepare
+
+    def base_prepare(self):
+        order.append("wall time")
+        return real(self)
+
+    monkeypatch.setattr(Base, "prepare", base_prepare)
+    set_barcode_sink(lambda _: order.append("recorded"))
+    try:
+        BarcodeTTL().prepare()
+    finally:
+        set_barcode_sink(None)
+    assert order == ["recorded", "wall time"]
