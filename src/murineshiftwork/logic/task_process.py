@@ -742,6 +742,13 @@ class TaskProcess:
         import shutil
 
         from murineshiftwork.cli.tasks import load_task_module
+        from murineshiftwork.logic.barcode import set_barcode_sink
+
+        session_file_path = self.session_paths.get("session_file_path")
+        if session_file_path:
+            set_barcode_sink(
+                lambda sent: update_session_yaml(session_file_path, barcodes=sent)
+            )
 
         try:
             mod = load_task_module(self.task_name)
