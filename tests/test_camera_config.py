@@ -117,8 +117,8 @@ def test_list_of_groups():
                 "name": "behaviour",
                 "backend": "flir_bonsai",
                 "units": [
-                    {"name": "top", "hw_id": "18012744", "index": 0},
-                    {"name": "back", "hw_id": "18107252"},
+                    {"name": "top", "hw_id": "12345678", "index": 0},
+                    {"name": "back", "hw_id": "87654321"},
                 ],
                 "settings": {"driver": "spinnaker"},
             },
@@ -133,7 +133,7 @@ def test_list_of_groups():
         ]
     )
     behaviour, pupil = s.cameras
-    assert behaviour.units[0].hw_id == "18012744"
+    assert behaviour.units[0].hw_id == "12345678"
     assert behaviour.units[0].unit_settings == {"index": 0}
     assert (pupil.role, pupil.record) == ("eye", "always")
 
@@ -251,3 +251,23 @@ def test_every_shared_setup_loads():
             assert cfg.cameras == [_expected_group(block)], path.name
         else:
             assert cfg.cameras, path.name
+
+
+def test_unquoted_numeric_serial_is_read_as_text():
+    group = CameraGroup.model_validate(
+        yaml.safe_load(
+            "name: flir\nbackend: flir_bonsai\nunits:\n- name: top\n  hw_id: 12345678\n"
+        )
+    )
+    assert group.units[0].hw_id == "12345678"
+
+
+def test_boolean_hw_id_is_refused():
+    with pytest.raises(ValidationError):
+        CameraGroup.model_validate(
+            {
+                "name": "flir",
+                "backend": "flir_bonsai",
+                "units": [{"name": "top", "hw_id": True}],
+            }
+        )

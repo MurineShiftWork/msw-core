@@ -225,6 +225,14 @@ class CameraUnit(BaseModel):
     def _valid_name(cls, value: str) -> str:
         return _check_camera_name("camera", value)
 
+    @field_validator("hw_id", mode="before")
+    @classmethod
+    def _hw_id_as_text(cls, value: Any) -> Any:
+        # serials are numbers, and YAML reads an unquoted one as an int
+        if isinstance(value, int) and not isinstance(value, bool):
+            return str(value)
+        return value
+
     @property
     def unit_settings(self) -> dict[str, Any]:
         """The backend-specific keys of this unit."""
