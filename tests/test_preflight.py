@@ -228,7 +228,7 @@ def test_backend_that_cannot_be_imported_is_reported(tmp_path, installed):
         preflight_hardware_check(d)
     msg = str(exc.value)
     assert "cannot be imported (No module named 'aiohttp')" in msg
-    assert "msw-flir-bonsai>=0.6.0" in msg
+    assert "msw-flir-bonsai>=0.8.0" in msg
 
 
 def test_installed_backend_passes(tmp_path, installed):

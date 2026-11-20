@@ -52,7 +52,7 @@ dev = [
     "mypy",
     "types-PyYAML",
     # the rce camera backend, for the contract tests against a real backend
-    "rpi-camera-ensemble[msw]==0.9.0",
+    "rpi-camera-ensemble[msw]==0.18.1",
 ]
 docs = [
     "mkdocs-material",

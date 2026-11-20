@@ -78,7 +78,7 @@ STATUS_FAILED = "failed"
 
 #: what to install for the first-party backends
 BACKEND_PACKAGES = {
-    "flir_bonsai": "msw-flir-bonsai>=0.6.0 (extra: murineshiftwork[flir])",
+    "flir_bonsai": "msw-flir-bonsai>=0.8.0 (extra: murineshiftwork[flir])",
     "rce": "rpi-camera-ensemble[msw]>=0.9.0 (extra: murineshiftwork[rce])",
 }
 
