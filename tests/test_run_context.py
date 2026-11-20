@@ -160,4 +160,5 @@ def test_to_task_kwargs_keys_are_all_boundary_input_keys():
     assert set(kw) <= set(d) | {
         "debug",
         "simulate",
-    }  # debug/simulate default when absent
+        "camera_failure",
+    }  # debug/simulate/camera_failure default when absent

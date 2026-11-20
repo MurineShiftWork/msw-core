@@ -90,9 +90,9 @@ def test_scale_baudrate_explicit_value_is_kept():
 
 def _resolve_camera(tmp_path, cam_config: str, cli_value: str = ""):
     from murineshiftwork.cli.evaluate import _resolve_setup_config_ports
-    from murineshiftwork.logic.config.models import CameraConfig, SetupConfig
+    from murineshiftwork.logic.config.models import SetupConfig
 
-    setup = SetupConfig(name="rig", cameras=CameraConfig(config=cam_config))
+    setup = SetupConfig(name="rig", cameras={"backend": "rce", "config": cam_config})
     ad: dict = {"config_dir": str(tmp_path), "config_file_camera": cli_value}
     _resolve_setup_config_ports(ad, setup, {})
     return ad
@@ -102,11 +102,11 @@ def test_relative_camera_config_resolves_against_config_dir(tmp_path):
     ad = _resolve_camera(tmp_path, "cameras/rig.yaml")
     expected = str(tmp_path / "cameras" / "rig.yaml")
     assert ad["config_file_camera"] == expected
-    assert ad["cameras_config"].config == expected
+    assert ad["cameras_config"].settings["config"] == expected
 
 
 def test_absolute_camera_config_is_unchanged(tmp_path):
     absolute = str(tmp_path / "elsewhere" / "rig.yaml")
     ad = _resolve_camera(tmp_path, absolute)
     assert ad["config_file_camera"] == absolute
-    assert ad["cameras_config"].config == absolute
+    assert ad["cameras_config"].settings["config"] == absolute

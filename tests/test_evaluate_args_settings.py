@@ -199,7 +199,7 @@ def test_record_cameras_all_from_setup_task_overrides(run_evaluate, camera_setup
     out = run_evaluate(setup="rig1")
     assert out["settings.task.patched"]["record_cameras"] == ["top", "left", "bottom"]
     assert out["settings.task.provenance"]["record_cameras"] == label
-    assert out["cameras_config"].selected is None
+    assert out["cameras_config"].unit_names == []
 
 
 def test_subject_record_cameras_wins_over_setup(run_evaluate, camera_setup):
@@ -212,7 +212,7 @@ def test_subject_record_cameras_wins_over_setup(run_evaluate, camera_setup):
     out = run_evaluate(setup="rig1")
     assert out["settings.task.patched"]["record_cameras"] == ["bottom"]
     assert out["settings.task.provenance"]["record_cameras"].startswith("subject:")
-    assert out["cameras_config"].selected == ["bottom"]
+    assert out["cameras_config"].unit_names == ["bottom"]
 
 
 def test_cli_record_cameras_all_wins_over_subject(run_evaluate, camera_setup):
@@ -224,7 +224,7 @@ def test_cli_record_cameras_all_wins_over_subject(run_evaluate, camera_setup):
     )
     out = run_evaluate(setup="rig1", task_settings_overrides=["record_cameras=all"])
     assert out["settings.task.patched"]["record_cameras"] == ["top", "left", "bottom"]
-    assert out["cameras_config"].selected is None
+    assert out["cameras_config"].unit_names == []
 
 
 def test_record_cameras_unset_records_all_cameras(run_evaluate, camera_setup):
@@ -232,7 +232,7 @@ def test_record_cameras_unset_records_all_cameras(run_evaluate, camera_setup):
     _write_subject(run_evaluate.config_dir, "subj001")
     out = run_evaluate(setup="rig1")
     assert "record_cameras" not in out["settings.task.patched"]
-    assert out["cameras_config"].selected is None
+    assert out["cameras_config"].unit_names == []
 
 
 def test_unknown_record_camera_from_setup_refuses_the_run(run_evaluate, camera_setup):
@@ -244,7 +244,7 @@ def test_unknown_record_camera_from_setup_refuses_the_run(run_evaluate, camera_s
 
 @pytest.mark.parametrize(
     "value, recorded, selected",
-    [(["top"], ["top"], ["top"]), ("all", ["top", "left", "bottom"], None)],
+    [(["top"], ["top"], ["top"]), ("all", ["top", "left", "bottom"], [])],
 )
 def test_record_cameras_with_relative_camera_config(
     run_evaluate, value, recorded, selected
@@ -280,8 +280,8 @@ def test_record_cameras_with_relative_camera_config(
     _write_subject(config_dir, "subj001")
     out = run_evaluate(setup="rig1")
     assert out["settings.task.patched"]["record_cameras"] == recorded
-    assert out["cameras_config"].config == str(ensemble)
-    assert out["cameras_config"].selected == selected
+    assert out["cameras_config"].settings["config"] == str(ensemble)
+    assert out["cameras_config"].unit_names == selected
 
 
 def test_subject_record_cameras_ignored_on_rig_without_video(
@@ -296,4 +296,30 @@ def test_subject_record_cameras_ignored_on_rig_without_video(
     out = run_evaluate(setup="rig1")
     assert "record_cameras" not in out["settings.task.patched"]
     assert "record_cameras" not in out["settings.task.provenance"]
-    assert out["cameras_config"].selected is None
+    assert out["cameras_config"].unit_names == []
+
+
+def test_camera_failure_from_setup_and_run(run_evaluate, camera_setup):
+    camera_setup({})
+    _write_subject(run_evaluate.config_dir, "subj001")
+    out = run_evaluate(setup="rig1")
+    assert out["camera_failure"] == "raise"
+    assert out["run_context"].camera_failure == "raise"
+    out = run_evaluate(setup="rig1", camera_failure="continue")
+    assert out["camera_failure"] == "continue"
+    assert out["run_context"].camera_failure == "continue"
+    assert out["run_context"].to_task_kwargs()["camera_failure"] == "continue"
+    assert [g.name for g in out["camera_groups"]] == ["rce"]
+    # the copy the deprecated camera client gets carries the policy
+    assert out["cameras_config"].failure_policy == "continue"
+
+
+def test_rce_data_dir_defaults_to_out_path(run_evaluate, camera_setup, tmp_path):
+    """The conductor saves each acquisition's ensemble and conductor YAML under
+    the run's out_path, as before camera groups."""
+    camera_setup({})
+    _write_subject(run_evaluate.config_dir, "subj001")
+    out = run_evaluate(setup="rig1")
+    [group] = out["camera_groups"]
+    assert group.settings["data_dir"] == str(tmp_path / "data")
+    assert out["cameras_config"].settings["data_dir"] == str(tmp_path / "data")

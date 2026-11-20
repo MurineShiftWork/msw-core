@@ -5,6 +5,7 @@ from argparse import (
 )
 from textwrap import dedent
 
+from murineshiftwork.cli.cameras import run_cameras_check
 from murineshiftwork.cli.config import (
     run_config_migrate_subjects,
     run_config_show,
@@ -109,6 +110,17 @@ def _add_session_args(parser):
             "When --host is also set and the host cannot be reached, continue "
             "as a standalone session instead of aborting. Without this flag, a "
             "--host attach failure is a hard error."
+        ),
+    )
+    g.add_argument(
+        "--camera-failure",
+        dest="camera_failure",
+        choices=["raise", "continue"],
+        default="",
+        help=(
+            "What a camera failing at preflight or start does to this run: 'raise' "
+            "stops the cameras and aborts, 'continue' records the failure and runs "
+            "on. Default: the setup's camera_failure (raise when unset)."
         ),
     )
 
@@ -690,6 +702,63 @@ def make_subparser_config(sub_parsers):
     pm.set_defaults(func=run_config_migrate_subjects)
 
 
+def make_subparser_cameras(sub_parsers):
+    p = sub_parsers.add_parser(
+        "cameras",
+        help="Check the cameras of a setup",
+        formatter_class=ArgparseFormatter,
+        description=dedent(
+            """\
+            Camera utilities.
+
+            Commands:
+              msw cameras check <setup>              Preflight every camera group
+              msw cameras check <setup> -t <task>    Only the groups a run of the task starts
+
+            The check loads, configures and preflights the camera backends and never
+            records; no Bpod or other device is needed. Every camera is reported
+            whatever the setup's camera_failure policy.
+
+            Exit codes: 0 every camera ready, 1 a camera missing or failed,
+            2 a config error (unknown backend, settings refused, missing RCE ensemble
+            YAML or Bonsai executable).
+
+            Examples:
+              msw cameras check rig1
+              msw cameras check rig1 --task sequence --json
+            """
+        ),
+        epilog=_CREDIT_EPILOG,
+    )
+    sub = p.add_subparsers(metavar="subcommand", dest="subcommand")
+    sub.required = True
+    pc = sub.add_parser(
+        "check",
+        help="Preflight the cameras of a setup without starting a run",
+        formatter_class=ArgparseFormatter,
+        epilog=_CREDIT_EPILOG,
+    )
+    pc.add_argument(
+        "setup", type=str, help="Setup name (config_dir/setups/<name>.yaml)"
+    )
+    pc.add_argument(
+        "-t",
+        "--task",
+        type=str,
+        default="",
+        help="Check only the groups a run of this task starts (record_video, "
+        "record_cameras, record: always); default: every group",
+    )
+    pc.add_argument(
+        "--json",
+        action="store_true",
+        dest="as_json",
+        help="Print the per-group and per-camera results as JSON",
+    )
+    pc.add_argument("-cd", "--config-dir", type=str, default="", dest="config_dir")
+    pc.set_defaults(func=run_cameras_check)
+
+
 def make_subparser_configs(sub_parsers):
     p = sub_parsers.add_parser(
         "configs",
@@ -846,6 +915,7 @@ def parse_args(args=None):
     make_subparser_tasks(sub_parsers)
     make_subparser_config(sub_parsers)
     make_subparser_configs(sub_parsers)
+    make_subparser_cameras(sub_parsers)
 
     # Load plugin subcommands registered under the "msw.cli" entry-point group.
     # Each plugin calls register(sub_parsers) to add its own subparser(s).

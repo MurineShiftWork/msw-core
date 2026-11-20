@@ -53,20 +53,81 @@ def preflight_hardware_check(args_dict: dict) -> None:
         if bpod_port and not test_serial_port_is_accessible(bpod_port):
             errors.append(f"bpod serial port not accessible: {bpod_port!r}")
 
-    # --- Camera (if task records video): what the setup's camera backend needs ---
-    if task_settings.get("record_video", False):
-        cameras = getattr(setup_config, "cameras", None)
-        if cameras is not None and cameras.backend == "flir_bonsai":
-            # No RCE config file: Bonsai is found at launch (setup bonsai_exe, else BONSAI_EXE).
-            if cameras.bonsai_exe and not Path(cameras.bonsai_exe).exists():
-                errors.append(f"Bonsai executable not found: {cameras.bonsai_exe!r}")
-        else:
-            cam_cfg = args_dict.get("config_file_camera", "")
-            if not cam_cfg or not Path(cam_cfg).exists():
-                errors.append(f"Camera config not found: {cam_cfg!r}")
+    # --- Cameras: every group this run starts must load and accept its settings ---
+    errors += _camera_errors(args_dict, bool(task_settings.get("record_video", False)))
 
     if errors:
         bullet_list = "\n".join(f"  • {e}" for e in errors)
         raise RuntimeError(
             f"Pre-flight check failed: fix before session can start:\n{bullet_list}"
         )
+
+
+def _camera_errors(args_dict: dict, record_video: bool) -> list[str]:
+    """What stops the camera groups this run starts, one line per problem.
+
+    Each group is checked without touching a camera: an RCE group's ensemble YAML
+    and a FLIR group's ``bonsai_exe`` (or ``BONSAI_EXE``) must exist, then its
+    backend is loaded and ``configure``-d, which reports a missing or broken
+    plugin and settings the backend refuses.
+    """
+    groups = args_dict.get("camera_groups") or []
+    if record_video and not any(g.record == "with_video" for g in groups):
+        cam_cfg = args_dict.get("config_file_camera", "") or ""
+        if cam_cfg:
+            return [f"Camera config not found: {cam_cfg!r}"]
+        return ["record_video is on but the setup has no video cameras"]
+    errors: list[str] = []
+    for group in groups:
+        if record_video or group.record == "always":
+            errors += _camera_group_errors(group)
+    return errors
+
+
+def camera_group_file_error(group) -> str:
+    """The file a camera group needs and does not find, or an empty string.
+
+    An RCE group needs its ensemble YAML (``settings.config``); a FLIR group needs
+    its ``bonsai_exe`` (or ``BONSAI_EXE``) when one is given.
+    """
+    import os
+
+    label = f"camera group {group.name!r}"
+    settings = group.settings
+    if group.backend == "rce":
+        cfg = str(settings.get("config") or "")
+        if not cfg or not Path(cfg).expanduser().exists():
+            return f"{label}: Camera config not found: {cfg!r}"
+    if group.backend == "flir_bonsai":
+        exe = str(settings.get("bonsai_exe") or "")
+        source = "bonsai_exe"
+        if not exe:
+            exe, source = os.environ.get("BONSAI_EXE", "").strip(), "BONSAI_EXE"
+        if exe and not Path(exe).exists():
+            return f"{label}: Bonsai executable not found ({source}): {exe!r}"
+    return ""
+
+
+def _camera_group_errors(group) -> list[str]:
+    from msw_plugin_api.camera import CameraConfigError
+
+    from murineshiftwork.hardware.camera.session import load_backend, unit_specs
+
+    file_error = camera_group_file_error(group)
+    if file_error:
+        return [file_error]
+    label = f"camera group {group.name!r}"
+    settings = dict(group.settings)
+    backend = None
+    try:
+        backend = load_backend(group.backend)
+        backend.configure(settings, unit_specs(group))
+    except CameraConfigError as exc:
+        return [f"{label}: {exc}"]
+    except Exception as exc:  # noqa: BLE001 - any configure failure stops the run
+        return [f"{label}: backend {group.backend!r}: {type(exc).__name__}: {exc}"]
+    finally:
+        if backend is not None:
+            with contextlib.suppress(Exception):
+                backend.close()
+    return []

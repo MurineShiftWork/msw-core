@@ -30,7 +30,7 @@ from murineshiftwork.logic.config import (
     read_task_modes,
     validate_config_file_path,
 )
-from murineshiftwork.logic.config.models import DEFAULT_SCALE_BAUDRATE
+from murineshiftwork.logic.config.models import DEFAULT_SCALE_BAUDRATE, CameraGroup
 from murineshiftwork.logic.log import setup_logging
 from murineshiftwork.logic.machine_config import resolve_config_dir, resolve_data_dir
 from murineshiftwork.logic.paths import get_host_ip, get_host_name
@@ -453,26 +453,81 @@ def _resolve_setup_config_ports(args_dict, setup_config, patched):
         args_dict["serial_port_pulsepal"] = ""
         patched.pop("serial_port_pulsepal", None)
 
-    if setup_config and setup_config.cameras:
-        cam_path = _resolve_against_config_dir(
-            setup_config.cameras.config, args_dict.get("config_dir", "")
-        )
-        if cam_path and (
-            not args_dict.get("config_file_camera")
-            or not Path(args_dict.get("config_file_camera", "")).exists()
-        ):
-            args_dict["config_file_camera"] = cam_path
-            logging.debug(f"Resolved camera config from SetupConfig: {cam_path}")
-        args_dict["cameras_config"] = setup_config.cameras.model_copy(
-            update={"config": cam_path}
-        )
+    _resolve_camera_groups(args_dict, setup_config)
 
     if setup_config:
         _inject_valve_calibration(setup_config, patched)
 
 
+def _resolve_camera_groups(args_dict: dict, setup_config) -> None:
+    """Resolve the setup's camera groups for the run into ``camera_groups``.
+
+    A relative ``settings.config`` path is resolved against the config dir. An RCE
+    group without one takes ``--config-file-camera``, and a run without camera
+    groups whose ``--config-file-camera`` exists gets one RCE group from it, as
+    before camera groups. An RCE group's ``data_dir`` defaults to the run's
+    ``out_path``, where the conductor saves each acquisition's ensemble and
+    conductor YAML. ``config_file_camera`` is set to the ensemble YAML of a video
+    RCE group for tasks that read it directly.
+    """
+    config_dir = args_dict.get("config_dir", "")
+    cli_camera = args_dict.get("config_file_camera", "") or ""
+    cli_exists = bool(cli_camera) and Path(cli_camera).exists()
+    groups = list(setup_config.cameras) if setup_config is not None else []
+    if not groups and cli_exists:
+        groups = [
+            CameraGroup(name="rce", backend="rce", settings={"config": cli_camera})
+        ]
+    resolved = []
+    for group in groups:
+        settings = dict(group.settings)
+        if isinstance(settings.get("config"), str) and settings["config"]:
+            settings["config"] = _resolve_against_config_dir(
+                settings["config"], config_dir
+            )
+        if group.backend == "rce" and not settings.get("config") and cli_exists:
+            settings["config"] = cli_camera
+        if group.backend == "rce" and args_dict.get("out_path"):
+            settings.setdefault("data_dir", args_dict["out_path"])
+        if (
+            group.backend == "rce"
+            and group.record == "with_video"
+            and settings.get("config")
+            and not cli_exists
+        ):
+            args_dict["config_file_camera"] = settings["config"]
+            logging.debug(
+                f"Resolved camera config from SetupConfig: {settings['config']}"
+            )
+        resolved.append(group.model_copy(update={"settings": settings}))
+    args_dict["camera_groups"] = resolved
+    _set_legacy_cameras_config(args_dict)
+
+
+def _set_legacy_cameras_config(args_dict: dict) -> None:
+    """``cameras_config``: the one group the deprecated ``make_camera_client`` drives
+    (the first group recording with video), or None.
+
+    The copy carries the run's camera failure policy, so the shim applies it
+    without the task passing it."""
+    groups = args_dict.get("camera_groups") or []
+    group = next((g for g in groups if g.record == "with_video"), None)
+    if group is not None and args_dict.get("camera_failure"):
+        group = group.with_failure_policy(args_dict["camera_failure"])
+    args_dict["cameras_config"] = group
+
+
+def _resolve_camera_failure(args_dict: dict, setup_config) -> None:
+    """The run's camera failure policy: ``--camera-failure``, else the setup's."""
+    value = args_dict.get("camera_failure") or ""
+    args_dict["camera_failure"] = value or (
+        setup_config.camera_failure if setup_config is not None else "raise"
+    )
+    _set_legacy_cameras_config(args_dict)
+
+
 def _resolve_record_cameras(args_dict: dict, patched: dict) -> None:
-    """Narrow the camera config handed to the task to the cameras it records.
+    """Narrow the run's camera groups to the cameras the task records.
 
     ``record_cameras`` is an ordinary task setting, so any settings layer can set it
     (the setup's or subject's ``task_overrides``, ``-ts``) and its provenance comes
@@ -481,7 +536,7 @@ def _resolve_record_cameras(args_dict: dict, patched: dict) -> None:
     it; ``all`` on cameras without usable names is dropped instead, as if unset.
     With ``record_video`` off the setting is dropped unchecked, so a subject-level
     choice does not refuse runs on rigs without those cameras.
-    Raises before any hardware starts when a name is unknown or the list is empty.
+    Raises before any hardware starts when a value is unknown or the list is empty.
     """
     value = patched.get(RECORD_CAMERAS_KEY)
     if value is None:
@@ -497,15 +552,12 @@ def _resolve_record_cameras(args_dict: dict, patched: dict) -> None:
         patched.pop(RECORD_CAMERAS_KEY, None)
         provenance.pop(RECORD_CAMERAS_KEY, None)
         return
-    # the copy whose ``config`` path is resolved against the config dir, not the raw
-    # (possibly relative) path of the setup YAML
     narrowed, recorded = resolve_record_cameras(
-        args_dict.get("cameras_config"),
-        value,
-        args_dict.get("config_file_camera", ""),
+        args_dict.get("camera_groups") or [], value
     )
     if narrowed is not None:
-        args_dict["cameras_config"] = narrowed
+        args_dict["camera_groups"] = narrowed
+        _set_legacy_cameras_config(args_dict)
     if recorded is None:
         # ``all`` on cameras without names: same as unset, so the task never sees it
         patched.pop(RECORD_CAMERAS_KEY, None)
@@ -666,6 +718,7 @@ def evaluate_args(args_dict=None):
 
     setup_config = args_dict.get("setup_config")
     _resolve_setup_config_ports(args_dict, setup_config, patched)
+    _resolve_camera_failure(args_dict, setup_config)
     _resolve_record_cameras(args_dict, patched)
     _resolve_host_session(args_dict)
     # Typed run context (spine refactor) is the single source for the resolved run: build it

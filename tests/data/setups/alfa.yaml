@@ -1,0 +1,7 @@
+---
+name: alfa
+devices:
+  bpod:
+    type: bpod
+    port: /dev/ttyACM0
+cameras: null

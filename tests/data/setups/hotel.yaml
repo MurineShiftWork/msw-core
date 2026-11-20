@@ -1,0 +1,17 @@
+---
+name: hotel
+devices:
+  bpod:
+    type: bpod
+    port: COM3
+cameras:
+  backend: flir_bonsai
+  driver: flycap
+  bonsai_exe: C:\Bonsai\Bonsai.exe
+  cameras:
+  # index = FlyCapture enumeration order; name labels the output files
+  - index: 0
+    name: top
+  - index: 1
+    name: back
+open_ephys_url: ''

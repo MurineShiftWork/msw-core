@@ -28,7 +28,11 @@ def test_version_exits_cleanly():
         ),
         (
             ["run", "--simulate"],
-            {"command": "run", "simulate": True},
+            {"command": "run", "simulate": True, "camera_failure": ""},
+        ),
+        (
+            ["run", "--camera-failure", "continue"],
+            {"command": "run", "camera_failure": "continue"},
         ),
         (
             ["calibration", "plot"],

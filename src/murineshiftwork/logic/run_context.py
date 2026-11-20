@@ -22,6 +22,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from murineshiftwork.logic.config import ExecutionConfig, SetupConfig, SubjectConfig
+from murineshiftwork.logic.config.models import CameraFailurePolicy
 
 
 class DevicePorts(BaseModel):
@@ -62,6 +63,8 @@ class RunContext(BaseModel):
     acq_type: str = "msw"
     # task.yaml version; None -> callers default to 1
     session_version: int | None = None
+    # camera failure policy of this run: --camera-failure, else the setup's
+    camera_failure: CameraFailurePolicy = "raise"
     ports: DevicePorts = Field(default_factory=DevicePorts)
     setup: SetupConfig | None = None
     subject_config: SubjectConfig | None = None
@@ -86,6 +89,9 @@ class RunContext(BaseModel):
             session_type=d.get("session_type", "") or "",
             acq_type=d.get("acq_type") or "msw",
             session_version=d.get("session_version"),
+            camera_failure=d.get("camera_failure")
+            or getattr(d.get("setup_config"), "camera_failure", None)
+            or "raise",
             ports=DevicePorts(
                 bpod=d.get("serial_port_bpod", "") or "",
                 stage=d.get("serial_port_stage", "") or "",
@@ -117,6 +123,7 @@ class RunContext(BaseModel):
             "session_type": self.session_type,
             "acq_type": self.acq_type,
             "session_version": self.session_version,
+            "camera_failure": self.camera_failure,
             # serial_port_bpod stays: TaskProcess takes it as a constructor param for the
             # no-collection bpod-open fallback. The other device ports are read from the device
             # collection now (Cycle D), so they no longer cross the task boundary.
