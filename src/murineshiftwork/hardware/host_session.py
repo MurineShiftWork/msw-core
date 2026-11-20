@@ -63,8 +63,10 @@ def make_host_session(session_type: str, **kwargs: Any) -> HostSessionProtocol:
                 )
             return session
 
+    registered = sorted(ep.name for ep in entry_points(group="msw.host"))
     raise ValueError(
-        f"No msw.host plugin registered for {session_type!r}. "
+        f"No msw.host plugin registered for {session_type!r} "
+        f"(registered: {', '.join(registered) or 'none'}). "
         f"Install the relevant package (e.g. pip install msw-open-ephys) "
         f"and ensure its entry-point is declared."
     )

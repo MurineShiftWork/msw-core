@@ -579,6 +579,34 @@ def _parse_host_flag(value: str) -> tuple[str, str]:
     return parts[0].strip().lower(), (parts[1].strip() if len(parts) > 1 else "")
 
 
+def _host_unavailable(
+    args_dict: dict, session_type: str, url: str | None, reason: str
+) -> None:
+    """Abort a ``--host`` run that cannot attach, unless ``--force-standalone``.
+
+    Every way ``--host`` can fail (unknown host type, no URL, attach failed) ends
+    here, so none of them records standalone into another folder unasked.
+    """
+    where = f"{session_type} @ {url}" if url else session_type
+    if not args_dict.get("force_standalone"):
+        raise RuntimeError(
+            f"\n\n  --host {where} could not attach:\n"
+            f"  {reason}\n\n"
+            f"  Session paths cannot be determined: aborting to avoid saving\n"
+            f"  data to the wrong location.\n\n"
+            f"  Options:\n"
+            f"    1. Fix the issue (run oe-remote record first, check URL)\n"
+            f"    2. Use --link-to ACQUISITION_NAME to set the path manually\n"
+            f"    3. Pass --force-standalone to intentionally run without a host\n"
+        )
+    logging.warning(
+        "--force-standalone: host session (%s) unavailable (%s): "
+        "saving to standalone path",
+        where,
+        reason,
+    )
+
+
 def _resolve_host_session(args_dict: dict) -> None:
     """Attach to a host acquisition session and populate linked_to.
 
@@ -604,9 +632,12 @@ def _resolve_host_session(args_dict: dict) -> None:
 
             url = read_open_ephys_url()
         if not url:
-            logging.warning(
-                "--host openephys: no URL: pass as openephys:HOST or set "
-                "open_ephys_url in the setup YAML"
+            _host_unavailable(
+                args_dict,
+                session_type,
+                url,
+                "no URL: pass it as openephys:HOST or set open_ephys_url in the "
+                "setup YAML or the machine config",
             )
             return
 
@@ -615,31 +646,14 @@ def _resolve_host_session(args_dict: dict) -> None:
     try:
         client = make_host_session(session_type, **{"url": url} if url else {})
     except (ValueError, TypeError) as exc:
-        logging.warning("--host: %s", exc)
+        _host_unavailable(args_dict, session_type, url, str(exc))
         return
 
     info = client.attach()
 
     if info is None:
         reason = getattr(client, "fail_reason", "") or "unknown reason"
-        if not args_dict.get("force_standalone"):
-            raise RuntimeError(
-                f"\n\n  --host {session_type} @ {url} could not attach:\n"
-                f"  {reason}\n\n"
-                f"  Session paths cannot be determined: aborting to avoid saving\n"
-                f"  data to the wrong location.\n\n"
-                f"  Options:\n"
-                f"    1. Fix the issue (run oe-remote record first, check URL)\n"
-                f"    2. Use --link-to ACQUISITION_NAME to set the path manually\n"
-                f"    3. Pass --force-standalone to intentionally run without a host\n"
-            )
-        logging.warning(
-            "--force-standalone: host session (%s @ %s) unavailable (%s): "
-            "saving to standalone path",
-            session_type,
-            url,
-            reason,
-        )
+        _host_unavailable(args_dict, session_type, url, reason)
         return
 
     if args_dict.get("linked_to"):
