@@ -71,3 +71,50 @@ def test_plugin_not_satisfying_protocol_raises(monkeypatch):
 def test_setup_config_has_no_host_session_field():
     # host sessions are opted into per run (--host), never pinned in the setup YAML
     assert not hasattr(SetupConfig(name="rig1"), "host_session")
+
+
+# --host in msw run: every failure aborts unless --force-standalone
+
+
+class _AttachingHostSession(_FakeHostSession):
+    def attach(self, **kwargs):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            backend="fake", session_name="s1__20260101_000000", subject="s1"
+        )
+
+
+def _resolve(args):
+    from murineshiftwork.cli.evaluate import _resolve_host_session
+
+    _resolve_host_session(args)
+    return args
+
+
+def test_unknown_host_type_aborts_and_lists_the_registered(monkeypatch):
+    _register(monkeypatch, "openephys", _FakeHostSession)
+    with pytest.raises(RuntimeError, match="could not attach") as err:
+        _resolve({"host_flag": "photo"})
+    assert "registered: openephys" in str(err.value)
+
+
+def test_unknown_host_type_with_force_standalone_records_standalone(monkeypatch):
+    _register(monkeypatch, "openephys", _FakeHostSession)
+    args = _resolve({"host_flag": "photo", "force_standalone": True})
+    assert "linked_to" not in args
+
+
+def test_openephys_without_a_url_aborts(monkeypatch):
+    _register(monkeypatch, "openephys", _FakeHostSession)
+    monkeypatch.setattr(
+        "murineshiftwork.logic.machine_config.read_open_ephys_url", lambda: ""
+    )
+    with pytest.raises(RuntimeError, match="no URL"):
+        _resolve({"host_flag": "openephys"})
+
+
+def test_a_host_that_attaches_links_the_run(monkeypatch):
+    _register(monkeypatch, "fake", _AttachingHostSession)
+    args = _resolve({"host_flag": "fake"})
+    assert args["linked_to"] == "s1__20260101_000000"
