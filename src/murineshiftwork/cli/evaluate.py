@@ -328,7 +328,7 @@ def _inject_valve_calibration(setup_config, patched) -> None:
         fallback = _FALLBACK_VALVE_CALIBRATION.model_copy()
         if fit_model_override is not None:
             fallback.fit_model = fit_model_override
-        patched["valve_s_for_ul"] = lambda vol, port=None: fallback.s_for_ul(vol)
+        patched["valve_s_for_ul"] = lambda port, volume_ul: fallback.s_for_ul(volume_ul)
         return
 
     # Build a lookup using the SetupConfig method but also check staleness per port.

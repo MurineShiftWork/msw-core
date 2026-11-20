@@ -18,7 +18,7 @@ requires-python = ">=3.12"
 dependencies = [
     "msw-io>=1.16.0",
     "msw-plugin-api>=0.4.0",
-    "ttl-barcoder>=0.4.2",
+    "ttl-barcoder>=0.5.0",
     "pydantic>=2.0",
     "rich",
     "pyyaml",
@@ -116,7 +116,7 @@ ignore_missing_imports = true
 [tool.commitizen]
 name = "cz_conventional_commits"
 version_provider = "commitizen"
-version = "0.36.1"
+version = "0.37.0"
 tag_format = "v$version"
 update_changelog_on_bump = false
 version_files = ["VERSION"]

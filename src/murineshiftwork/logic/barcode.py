@@ -1,6 +1,9 @@
+import logging
+import threading
+from collections.abc import Callable
 from pathlib import Path
 
-from ttl_barcoder.core.barcode_ttl import BarcodeTTL
+from ttl_barcoder.core.barcode_ttl import BarcodeTTL as _BarcodeTTL
 from ttl_barcoder.core.config import BarcodeConfig
 from ttl_barcoder.hardware.bpod.sender import (
     BARCODE_FIRST_STATE_NAME,
@@ -13,9 +16,73 @@ __all__ = [
     "BARCODE_FIRST_STATE_NAME",
     "inject_barcode_states",
     "barcode_config_from_settings",
+    "barcode_record",
+    "set_barcode_sink",
     "TTL_IDENTIFIER_SEQUENCES",
     "get_ttl_identifier_sequence",
 ]
+
+_sink: Callable[[list[dict]], None] | None = None
+_sent: list[dict] = []
+_lock = threading.Lock()
+
+
+def barcode_record(config: BarcodeConfig) -> dict:
+    """The settings a barcode was sent with, as recorded in session.yaml.
+
+    Everything a decoder needs: value type, bit count and order, init and bit
+    lengths, tolerance and the total duration of one barcode.
+    """
+    return {
+        **config.model_dump(mode="json"),
+        "bit_order": "lsb_first",
+        "framing": "init HIGH-LOW-HIGH, bits, end LOW-HIGH-LOW",
+        "total_duration_ms": config.total_duration_ms,
+    }
+
+
+def set_barcode_sink(sink: Callable[[list[dict]], None] | None) -> None:
+    """Where the settings of sent barcodes go (the session writer); None to stop.
+
+    The sink gets the list of distinct settings sent so far, each time a new one is
+    first used.
+    """
+    global _sink
+    with _lock:
+        _sink = sink
+        _sent.clear()
+
+
+def _note_sent(config: BarcodeConfig) -> None:
+    record = barcode_record(config)
+    with _lock:
+        if _sink is None or record in _sent:
+            return
+        _sent.append(record)
+        sink, sent = _sink, list(_sent)
+    try:
+        sink(sent)
+    except Exception:  # noqa: BLE001 - bookkeeping must not stop a barcode
+        logging.exception("barcode settings not recorded")
+
+
+class BarcodeTTL(_BarcodeTTL):
+    """``ttl_barcoder.BarcodeTTL`` that records its settings when a barcode is sent.
+
+    ``prepare`` is what tasks call before sending a barcode; the first call with
+    each distinct config reports it to the session (``set_barcode_sink``), before
+    the wall time is captured.
+    """
+
+    def prepare(self) -> tuple[int, float, list[tuple[bool, float]]]:
+        """Capture wall time and return (barcode_value, wall_time, timing_sequence).
+
+        The settings are recorded first, so the session file write never sits between
+        the captured wall time and the barcode going out.
+        """
+        _note_sent(self.config)
+        return super().prepare()
+
 
 # Per-task TTL barcode identifier sequences.
 # Not all tasks use this; some define sequences in their own task.settings.
