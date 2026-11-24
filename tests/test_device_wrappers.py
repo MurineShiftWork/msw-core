@@ -96,10 +96,9 @@ def _install_fake_stage(monkeypatch):
 
     class _FakeStage:
         def __init__(self):
+            # one-axis-stage's StageAPI is the serial connection (disconnect() on it)
             self.api = types.SimpleNamespace(
-                connection=types.SimpleNamespace(
-                    disconnect=lambda: calls.__setitem__("disconnected", True)
-                )
+                disconnect=lambda: calls.__setitem__("disconnected", True)
             )
 
         @classmethod

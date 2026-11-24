@@ -4,6 +4,14 @@ import threading
 import time
 
 
+def _is_reset_handshake_error(exc: BaseException | None) -> bool:
+    """An error of a handshake that read the board's boot bytes after the DTR reset:
+    undecodable bytes, or pybpodapi's wrong-byte ``BpodErrorException``."""
+    return isinstance(exc, UnicodeDecodeError) or (
+        exc is not None and type(exc).__name__ == "BpodErrorException"
+    )
+
+
 class BpodFactory:
     """Context-manager wrapper around pybpodapi Bpod with auto 4/8-port detection
     and retry on transient serial errors.
@@ -79,7 +87,10 @@ class BpodFactory:
         last_exc: Exception | None = None
         for attempt in range(1, retries + 1):
             if attempt > 1:
-                logging.warning(
+                logging.log(
+                    logging.INFO
+                    if attempt == 2 and _is_reset_handshake_error(last_exc)
+                    else logging.WARNING,
                     "Bpod connect attempt %d/%d on %s "
                     "(sleeping %.1f s for firmware settle)...",
                     attempt,
@@ -113,7 +124,12 @@ class BpodFactory:
                 self._close_partial(self._bpod)
                 self._bpod = None
                 last_exc = exc
-                logging.warning(
+                # Opening the port resets the board (DTR), so the first handshake
+                # often reads boot garbage: expected, not worth a warning.
+                logging.log(
+                    logging.DEBUG
+                    if attempt == 1 and _is_reset_handshake_error(exc)
+                    else logging.WARNING,
                     "Bpod connect attempt %d/%d failed: %s: %s",
                     attempt,
                     retries,

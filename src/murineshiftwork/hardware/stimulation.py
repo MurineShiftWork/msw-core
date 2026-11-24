@@ -374,10 +374,18 @@ class Stimulation:
                     setattr(cfg, k, v)
 
     def connect(self, handle=None):
-        self._owns_connection = handle is None
-        if handle is None:
-            from murineshiftwork.hardware.simulate_guard import refuse_real_hardware
+        from murineshiftwork.hardware.simulate_guard import (
+            is_simulated,
+            refuse_real_hardware,
+        )
 
+        self._owns_connection = handle is None
+        if handle is None and is_simulated():
+            # a task that connects its own PulsePal runs under --simulate on a stand-in
+            from murineshiftwork.hardware.pulsepal.sim import SimPulsePal
+
+            handle = SimPulsePal()
+        if handle is None:
             refuse_real_hardware("PulsePal", self.port)
             self.pulsepal = _PulsePal(serial_port=self.port)
             for channel, params in self._channel_params.items():
@@ -437,11 +445,12 @@ class Stimulation:
                     trigger_mode=self.in_dict["trigger_mode"],
                 )
 
-        logging.info(
-            "PulsePal: configured via injected handle"
-            if not self._owns_connection
-            else f"PulsePal: connected on {self.port}"
-        )
+        if not self._owns_connection:
+            logging.info("PulsePal: configured via injected handle")
+        elif is_simulated():
+            logging.info("PulsePal: simulated (no hardware)")
+        else:
+            logging.info(f"PulsePal: connected on {self.port}")
         # Ensure clean stopped state after set_continuous armed the channels.
         # Without this, rectangular channels fire before the first gate trigger,
         # producing an extra pulse at the start of the first trial.

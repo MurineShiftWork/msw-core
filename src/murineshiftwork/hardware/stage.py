@@ -79,4 +79,4 @@ class StageDevice(ManagedDevice):
     def _close(self, handle: Any) -> None:
         if self._simulate:
             return
-        handle.api.connection.disconnect()
+        handle.api.disconnect()

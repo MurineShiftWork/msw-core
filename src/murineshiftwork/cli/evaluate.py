@@ -30,7 +30,12 @@ from murineshiftwork.logic.config import (
     read_task_modes,
     validate_config_file_path,
 )
-from murineshiftwork.logic.config.models import DEFAULT_SCALE_BAUDRATE, CameraGroup
+from murineshiftwork.logic.config.io import subject_config_schema_version
+from murineshiftwork.logic.config.models import (
+    DEFAULT_SCALE_BAUDRATE,
+    SUBJECT_CONFIG_SCHEMA_VERSION,
+    CameraGroup,
+)
 from murineshiftwork.logic.log import setup_logging
 from murineshiftwork.logic.machine_config import resolve_config_dir, resolve_data_dir
 from murineshiftwork.logic.paths import get_host_ip, get_host_name
@@ -197,12 +202,36 @@ def _evaluate_and_load_configs(args_dict=None):
         config_dir=args_dict["config_dir"],
         setup_name=args_dict.get("setup", ""),
     )
+    _refuse_outdated_subject_config(
+        args_dict["config_dir"], args_dict.get("subject", "")
+    )
     args_dict["subject_config"] = load_subject_config(
         config_dir=args_dict["config_dir"],
         subject_name=args_dict.get("subject", ""),
     )
 
     return args_dict
+
+
+def _refuse_outdated_subject_config(config_dir: str, subject: str) -> None:
+    """Refuse a run whose subject YAML has no or an older ``schema_version``.
+
+    ``load_subject_config`` migrates in memory only, so a run would read a config the
+    file does not hold; the operator migrates the file first. Runs before any
+    hardware or session folder.
+    """
+    if not config_dir or not subject:
+        return
+    version = subject_config_schema_version(config_dir, subject)
+    if version is None or version >= SUBJECT_CONFIG_SCHEMA_VERSION:
+        return
+    path = Path(config_dir) / "subjects" / f"{subject}.yaml"
+    raise ValueError(
+        f"\n\n\tSubject config {path} has schema_version "
+        f"{version or 'missing'}; this software needs "
+        f"{SUBJECT_CONFIG_SCHEMA_VERSION}.\n"
+        f"\tMigrate it first: msw config migrate-subjects\n"
+    )
 
 
 def _stage_device_to_controller_config(device) -> dict:
@@ -470,6 +499,17 @@ def _resolve_camera_groups(args_dict: dict, setup_config) -> None:
     conductor YAML. ``config_file_camera`` is set to the ensemble YAML of a video
     RCE group for tasks that read it directly.
     """
+    if args_dict.get("simulate"):
+        # A simulated run never reaches a camera: no groups, no legacy camera config
+        # (CameraSession.open refuses real backends as a backstop).
+        if (setup_config is not None and setup_config.cameras) or args_dict.get(
+            "config_file_camera"
+        ):
+            logging.info("simulate: cameras not started")
+        args_dict["camera_groups"] = []
+        args_dict["config_file_camera"] = ""
+        args_dict["cameras_config"] = None
+        return
     config_dir = args_dict.get("config_dir", "")
     cli_camera = args_dict.get("config_file_camera", "") or ""
     cli_exists = bool(cli_camera) and Path(cli_camera).exists()
@@ -501,6 +541,9 @@ def _resolve_camera_groups(args_dict: dict, setup_config) -> None:
             )
         resolved.append(group.model_copy(update={"settings": settings}))
     args_dict["camera_groups"] = resolved
+    # every group before record_video/record_cameras narrow the run: a stale session
+    # recovery resets them all (popped by run_task, never reaches a task)
+    args_dict["setup_camera_groups"] = list(resolved)
     _set_legacy_cameras_config(args_dict)
 
 
@@ -537,20 +580,26 @@ def _resolve_record_cameras(args_dict: dict, patched: dict) -> None:
     With ``record_video`` off the setting is dropped unchecked, so a subject-level
     choice does not refuse runs on rigs without those cameras.
     Raises before any hardware starts when a value is unknown or the list is empty.
+
+    ``record_video: false`` also drops the ``with_video`` groups and the legacy
+    ``cameras_config``/``config_file_camera``, so a task that drives the camera through
+    ``make_camera_client`` without checking ``record_video`` starts no video camera.
     """
     value = patched.get(RECORD_CAMERAS_KEY)
-    if value is None:
-        return
     provenance = args_dict.get("settings.task.provenance", {})
     if "record_video" in patched and not patched["record_video"]:
-        logging.info(
-            "record_video is off: ignoring %s=%r (from %s)",
-            RECORD_CAMERAS_KEY,
-            value,
-            provenance.get(RECORD_CAMERAS_KEY) or "unknown",
-        )
-        patched.pop(RECORD_CAMERAS_KEY, None)
-        provenance.pop(RECORD_CAMERAS_KEY, None)
+        _drop_video_cameras(args_dict)
+        if value is not None:
+            logging.info(
+                "record_video is off: ignoring %s=%r (from %s)",
+                RECORD_CAMERAS_KEY,
+                value,
+                provenance.get(RECORD_CAMERAS_KEY) or "unknown",
+            )
+            patched.pop(RECORD_CAMERAS_KEY, None)
+            provenance.pop(RECORD_CAMERAS_KEY, None)
+        return
+    if value is None:
         return
     narrowed, recorded = resolve_record_cameras(
         args_dict.get("camera_groups") or [], value
@@ -571,6 +620,22 @@ def _resolve_record_cameras(args_dict: dict, patched: dict) -> None:
         args_dict.get("task", ""),
         source or "unknown",
     )
+
+
+def _drop_video_cameras(args_dict: dict) -> None:
+    """Drop the ``with_video`` camera groups and the legacy camera config of a run
+    that records no video; ``record: always`` groups stay."""
+    groups = args_dict.get("camera_groups") or []
+    kept = [g for g in groups if g.record != "with_video"]
+    if len(kept) != len(groups) or args_dict.get("config_file_camera"):
+        logging.info(
+            "record_video is off: video cameras not started (%s)",
+            ", ".join(g.name for g in groups if g.record == "with_video")
+            or "config_file_camera",
+        )
+    args_dict["camera_groups"] = kept
+    args_dict["config_file_camera"] = ""
+    args_dict["cameras_config"] = None
 
 
 def _parse_host_flag(value: str) -> tuple[str, str]:
@@ -620,17 +685,24 @@ def _resolve_host_session(args_dict: dict) -> None:
         return
 
     session_type, url_override = _parse_host_flag(host_flag)
+    is_oe = session_type in ("openephys", "open_ephys", "open-ephys")
 
     # URL resolution: openephys reads from setup YAML or machine config when not in flag
     url = url_override
-    if not url and session_type in ("openephys", "open_ephys"):
+    url_source = "--host" if url else ""
+    if not url and is_oe:
         setup_config = args_dict.get("setup_config")
         if setup_config is not None:
             url = getattr(setup_config, "open_ephys_url", "") or ""
+            url_source = "setup yaml open_ephys_url" if url else ""
         if not url:
-            from murineshiftwork.logic.machine_config import read_open_ephys_url
+            from murineshiftwork.logic.machine_config import (
+                get_machine_config_path,
+                read_open_ephys_url,
+            )
 
             url = read_open_ephys_url()
+            url_source = f"machine config {get_machine_config_path()}" if url else ""
         if not url:
             _host_unavailable(
                 args_dict,
@@ -641,15 +713,29 @@ def _resolve_host_session(args_dict: dict) -> None:
             )
             return
 
+    if url:
+        logging.info("Host %s URL %s (from %s)", session_type, url, url_source)
+
     from murineshiftwork.hardware.host_session import make_host_session
 
+    kwargs: dict = {"url": url} if url else {}
+    if is_oe:
+        # attach only to a GUI that is recording, never to one merely acquiring
+        kwargs["require_recording"] = True
     try:
-        client = make_host_session(session_type, **{"url": url} if url else {})
+        client = make_host_session(session_type, **kwargs)
     except (ValueError, TypeError) as exc:
         _host_unavailable(args_dict, session_type, url, str(exc))
         return
 
-    info = client.attach()
+    subject = args_dict.get("subject", "")
+    try:
+        # the host refuses a recording of another subject
+        info = client.attach(subject=subject) if subject else client.attach()
+    except TypeError:
+        # compat: a host plugin whose attach() takes no subject keyword; drop once
+        # every host plugin accepts it
+        info = client.attach()
 
     if info is None:
         reason = getattr(client, "fail_reason", "") or "unknown reason"

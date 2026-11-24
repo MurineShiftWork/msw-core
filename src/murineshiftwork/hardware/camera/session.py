@@ -203,6 +203,8 @@ class CameraSession:
         self._stopping = False  # stop was called: start nothing more
         self._closed = False  # every group stopped and closed
         self._host_folder: str = ""
+        if self._runs:
+            _RUN_SESSIONS.append(self)
 
     # -- construction ------------------------------------------------------
 
@@ -281,6 +283,14 @@ class CameraSession:
         """
         if self._opened or not self._runs:
             return list(self._preflight_failures)
+        if self._load is load_backend:
+            from murineshiftwork.hardware.simulate_guard import refuse_real_hardware
+
+            # evaluate starts no camera under --simulate; a task that builds its own
+            # groups still never reaches a real camera
+            refuse_real_hardware(
+                "camera group(s) " + ", ".join(r.group.name for r in self._runs)
+            )
         self._opened = True
         try:
             for run in self._runs:
@@ -403,6 +413,16 @@ class CameraSession:
         finally:
             if first is not None:
                 raise first
+
+    def recorded_cameras(self) -> list[str]:
+        """``group/camera`` of every camera that started and did not fail."""
+        return [
+            f"{run.label}/{name}"
+            for run in self._runs
+            if run.started and not run.raised
+            for name in run.camera_names
+            if name not in run.failed
+        ]
 
     def record(self) -> CamerasRecord:
         """The camera record as it stands."""
@@ -614,6 +634,21 @@ class CameraSession:
             write_cameras_record(self._host_folder, self.record())
         except Exception:  # noqa: BLE001
             log.warning("could not write the camera record", exc_info=True)
+
+
+#: Camera sessions with groups created in this process since the last
+#: ``reset_run_sessions``; the CLI reads them for the run's exit code.
+_RUN_SESSIONS: list[CameraSession] = []
+
+
+def reset_run_sessions() -> None:
+    """Forget the camera sessions of an earlier run in this process."""
+    _RUN_SESSIONS.clear()
+
+
+def run_recorded_cameras() -> list[str]:
+    """``group/camera`` of every camera recorded by this run's camera sessions."""
+    return [name for s in _RUN_SESSIONS for name in s.recorded_cameras()]
 
 
 def run_camera_failure(args_dict: dict[str, Any]) -> str:

@@ -64,3 +64,12 @@ def fake_tasks(tmp_path, monkeypatch):
 def _clear_simulate_mark(monkeypatch):
     """A --simulate run marks the process environment; keep tests independent of each other."""
     monkeypatch.delenv("MSW_SIMULATE", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_session_locks(tmp_path_factory, monkeypatch):
+    """Session locks go to a temporary dir, never the user's ~/.murineshiftwork/locks."""
+    monkeypatch.setattr(
+        "murineshiftwork.logic.session_lock.LOCK_DIR",
+        tmp_path_factory.mktemp("locks"),
+    )

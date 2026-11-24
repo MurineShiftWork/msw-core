@@ -1,8 +1,24 @@
 import logging
 import platform
 import threading
+import warnings
 
 import numpy as np
+
+
+def _ignore_sounddevice_shape_warning() -> None:
+    """sounddevice (<= 0.5.x) sets ``ndarray.shape`` on its stream buffers, which
+    NumPy 2.5 deprecates; the warning points at sounddevice's code, not ours. Ignore
+    that one message from that one module until sounddevice ships a fix."""
+    warnings.filterwarnings(
+        "ignore",
+        message=r"Setting the shape",
+        category=DeprecationWarning,
+        module=r"sounddevice",
+    )
+
+
+_ignore_sounddevice_shape_warning()
 
 sample_rate_dict = {
     "sysdefault": 44100,

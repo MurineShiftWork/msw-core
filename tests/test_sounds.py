@@ -166,3 +166,27 @@ def test_falls_back_to_default_rate_when_device_rejects(monkeypatch):
 
     assert s.sample_rate == 48000  # correct-speed fallback, not deflated
     assert s.use_wasapi_exclusive is False  # exclusive not auto-enabled
+
+
+def test_sounddevice_numpy_shape_warning_is_ignored_only_there():
+    """NumPy 2.5 deprecates setting ndarray.shape, which sounddevice does on its
+    stream buffers; that warning from sounddevice is ignored, the same from our code
+    is not."""
+    import warnings
+
+    from murineshiftwork.logic.sounds import _ignore_sounddevice_shape_warning
+
+    def _set_shape():
+        a = np.zeros(4)
+        a.shape = (2, 2)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _ignore_sounddevice_shape_warning()
+        # run the same code as if it were sounddevice's module
+        exec(_set_shape.__code__, {"np": np, "__name__": "sounddevice"})
+        _set_shape()
+    shape_warnings = [w for w in caught if "Setting the shape" in str(w.message)]
+    deprecated = np.lib.NumpyVersion(np.__version__) >= "2.5.0"
+    # ours is reported, sounddevice's is not (none at all before NumPy 2.5)
+    assert len(shape_warnings) == (1 if deprecated else 0)
