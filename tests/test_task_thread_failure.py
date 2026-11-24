@@ -167,6 +167,6 @@ def test_session_yaml_records_the_task_settings(tmp_path):
     )
     assert data["task_settings"] == {
         "n_trials": 3,
-        "calibration_file": "/cal.csv",
+        "calibration_file": str(Path("/cal.csv")),
         "ports": [1, 3],
     }
