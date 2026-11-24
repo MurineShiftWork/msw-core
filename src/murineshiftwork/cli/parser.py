@@ -6,17 +6,20 @@ from argparse import (
 from textwrap import dedent
 
 from murineshiftwork.cli.cameras import run_cameras_check
+from murineshiftwork.cli.cameras_reset import run_cameras_reset
 from murineshiftwork.cli.config import (
     run_config_migrate_subjects,
     run_config_show,
     run_config_upgrade,
 )
+from murineshiftwork.cli.config_validate import run_config_validate
 from murineshiftwork.cli.configs import run_configs_archive
 from murineshiftwork.cli.defaults import (
     available_tasks,
     default_config_dir,
     default_out_path,
 )
+from murineshiftwork.cli.doctor import run_doctor
 from murineshiftwork.cli.execute import (
     run_action,
     run_calibration,
@@ -636,6 +639,7 @@ def make_subparser_config(sub_parsers):
               msw config show subject <name>   Show a resolved subject/setup/task config
               msw config upgrade task <name>   Add new bundled-default keys to a task overlay
               msw config upgrade --all         Upgrade every task overlay in the config dir
+              msw config validate [--setup X]  Check setups (and --subjects) against the models
 
             User values are preserved; only keys new in the bundled task.yaml are added
             (a timestamped .bak is written first). Use --dry-run to preview.
@@ -701,6 +705,47 @@ def make_subparser_config(sub_parsers):
     pm.add_argument("-cd", "--config-dir", type=str, default="", dest="config_dir")
     pm.set_defaults(func=run_config_migrate_subjects)
 
+    pv = sub.add_parser(
+        "validate",
+        help="Check setup (and subject) configs through the config models",
+        formatter_class=ArgparseFormatter,
+        description=dedent(
+            """\
+            Load setup YAMLs (and with --subjects every subject YAML) through the
+            models a run uses and report per file: model errors, name/file mismatch,
+            subject schema_version missing/older/newer, task_overrides for tasks not
+            installed here, missing or stale valve calibrations, and with
+            --check-ports device ports that do not resolve on this machine.
+
+            Exit codes: 0 no errors (no warnings either with --strict), 1 findings,
+            2 config dir or setup not found.
+            """
+        ),
+        epilog=_CREDIT_EPILOG,
+    )
+    target = pv.add_mutually_exclusive_group()
+    target.add_argument(
+        "--setup", type=str, default="", help="Validate only this setup"
+    )
+    target.add_argument(
+        "--all", action="store_true", help="Validate every setup (the default)"
+    )
+    pv.add_argument(
+        "--subjects", action="store_true", help="Also validate every subject config"
+    )
+    pv.add_argument(
+        "--check-ports",
+        action="store_true",
+        dest="check_ports",
+        help="Resolve each device port on this machine (port_by_path, /dev nodes)",
+    )
+    pv.add_argument("--strict", action="store_true", help="Exit 1 on warnings as well")
+    pv.add_argument(
+        "--json", action="store_true", dest="as_json", help="Print the report as JSON"
+    )
+    pv.add_argument("-cd", "--config-dir", type=str, default="", dest="config_dir")
+    pv.set_defaults(func=run_config_validate)
+
 
 def make_subparser_cameras(sub_parsers):
     p = sub_parsers.add_parser(
@@ -714,6 +759,7 @@ def make_subparser_cameras(sub_parsers):
             Commands:
               msw cameras check <setup>              Preflight every camera group
               msw cameras check <setup> -t <task>    Only the groups a run of the task starts
+              msw cameras reset --setup <setup>      End recordings left running on the cameras
 
             The check loads, configures and preflights the camera backends and never
             records; no Bpod or other device is needed. Every camera is reported
@@ -757,6 +803,73 @@ def make_subparser_cameras(sub_parsers):
     )
     pc.add_argument("-cd", "--config-dir", type=str, default="", dest="config_dir")
     pc.set_defaults(func=run_cameras_check)
+
+    pr = sub.add_parser(
+        "reset",
+        help="End recordings a dead session left running on the cameras",
+        formatter_class=ArgparseFormatter,
+        description=dedent(
+            """\
+            Per camera group: load and configure the backend and, when it supports
+            reset, end any recording its units hold and save what they recorded.
+            Backends without reset are listed as 'no reset'.
+
+            Exit codes: 0 every reset camera ok, 1 a camera failed to reset,
+            2 a config error or an msw-plugin-api without ResettableCameraBackend.
+            """
+        ),
+        epilog=_CREDIT_EPILOG,
+    )
+    pr.add_argument(
+        "--setup",
+        type=str,
+        required=True,
+        help="Setup name (config_dir/setups/<name>.yaml)",
+    )
+    pr.add_argument(
+        "--json", action="store_true", dest="as_json", help="Print results as JSON"
+    )
+    pr.add_argument("-cd", "--config-dir", type=str, default="", dest="config_dir")
+    pr.set_defaults(func=run_cameras_reset)
+
+
+def make_subparser_doctor(sub_parsers):
+    p = sub_parsers.add_parser(
+        "doctor",
+        help="Check that this machine can run a setup (rig sign-off)",
+        formatter_class=ArgparseFormatter,
+        description=dedent(
+            """\
+            One report, each check ok/warn/fail/skip: python and platform, msw-core
+            and msw plugin versions, machine config, config and data dirs,
+            'config validate' of the setup, then (unless --skip-hardware) the
+            run's device preflight (each serial device opened and closed, data dir
+            write test), 'cameras check', and an Open Ephys status GET when an OE
+            URL is configured.
+
+            Exit codes: 0 no check failed, 1 a check failed, 2 config dir or setup
+            not found.
+            """
+        ),
+        epilog=_CREDIT_EPILOG,
+    )
+    p.add_argument(
+        "--setup",
+        type=str,
+        required=True,
+        help="Setup name (config_dir/setups/<name>.yaml)",
+    )
+    p.add_argument(
+        "--skip-hardware",
+        action="store_true",
+        dest="skip_hardware",
+        help="Skip devices, cameras and Open Ephys",
+    )
+    p.add_argument(
+        "--json", action="store_true", dest="as_json", help="Print the report as JSON"
+    )
+    p.add_argument("-cd", "--config-dir", type=str, default="", dest="config_dir")
+    p.set_defaults(func=run_doctor)
 
 
 def make_subparser_configs(sub_parsers):
@@ -916,6 +1029,7 @@ def parse_args(args=None):
     make_subparser_config(sub_parsers)
     make_subparser_configs(sub_parsers)
     make_subparser_cameras(sub_parsers)
+    make_subparser_doctor(sub_parsers)
 
     # Load plugin subcommands registered under the "msw.cli" entry-point group.
     # Each plugin calls register(sub_parsers) to add its own subparser(s).

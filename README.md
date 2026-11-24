@@ -65,3 +65,68 @@ and error, and the backends are closed afterwards.
 Exit codes: `0` every camera ready, `1` a camera missing or failed, `2` a config error
 (unknown backend, settings the backend refuses, missing RCE ensemble YAML or Bonsai
 executable).
+
+## Rig sign-off commands
+
+Three commands for checking a rig PC (Windows or Linux) without starting a run. Each
+prints a table, or JSON with `--json`, and has the exit codes listed below it.
+
+### `msw config validate`
+
+```sh
+msw config validate [--setup <setup> | --all] [--subjects] [--check-ports] [--strict] [--json]
+```
+
+Loads each setup YAML (every one by default) and with `--subjects` every subject YAML
+through the pydantic models a run uses (subjects after the in-memory schema
+migration), so a file that passes loads in a run. Per file it reports `error`s (YAML
+or model errors, a subject `schema_version` newer than this software, a valve
+calibration without points) and `warning`s (`name` not matching the file name, a
+subject `schema_version` missing or older, `task_overrides` for tasks not installed on
+this machine, a Bpod setup without `bpod_valve` calibrations, calibrations older than
+`stale_days`). `--check-ports` also resolves every device port on this machine: an
+unresolvable `port_by_path` or a missing `/dev` node is an error; a Windows `COM` port
+cannot be checked without opening it and is accepted. Which valves a task rewards is
+not checked: setups name no tasks of their own.
+
+Use: on the machine that holds the configs, before a sign-off, and per rig with
+`--setup <setup> --check-ports`. Exit codes: `0` no errors (no warnings either with
+`--strict`), `1` findings, `2` config dir or setup not found, or nothing to validate.
+
+### `msw cameras reset`
+
+```sh
+msw cameras reset --setup <setup> [--json]
+```
+
+Ends recordings that a dead session left running on camera units (an RCE Pi keeps
+recording when the process that started it dies). Per camera group the backend is
+loaded and configured as in `msw cameras check`; a backend implementing
+`ResettableCameraBackend` (msw-plugin-api) is asked to `reset()`, which saves and
+ends whatever its units are recording and reports each camera. Backends without it
+are listed as `no reset`. A group that fails to load does not stop the others.
+
+Use: when a sign-off or `cameras check` finds a camera busy, or after a crashed
+session. Exit codes: `0` every reset camera ok, `1` a camera failed to reset, `2` a
+config error or an msw-plugin-api too old to have `ResettableCameraBackend`.
+
+### `msw doctor`
+
+```sh
+msw doctor --setup <setup> [--skip-hardware] [--json]
+```
+
+One report of `ok`/`warn`/`fail`/`skip` checks: Python and platform; msw-core and the
+distributions registering `msw.*` entry points, with versions (listed, not loaded);
+the machine config (`~/.murineshiftwork/msw_machine.yaml`) readable; config and data
+dirs; `config validate` of the setup (with `--check-ports` unless `--skip-hardware`).
+Without `--skip-hardware` it then runs the run's device preflight (the data dir is
+created and write-tested and every declared serial device is opened and closed, so a
+port held by another program fails), `cameras check`, and, when the setup's
+`open_ephys_url` or the machine config's `openephys_api_url` is set, one GET of the
+Open Ephys `/api/status` with a 3 s timeout (no attach). Open Ephys unreachable fails
+for a setup URL and warns for the machine-config fallback.
+
+Use: the per-rig sign-off check; `--skip-hardware` when a session is running on the
+rig. Exit codes: `0` no check failed, `1` a check failed, `2` config dir or setup not
+found.
