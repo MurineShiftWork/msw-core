@@ -118,3 +118,75 @@ def test_a_host_that_attaches_links_the_run(monkeypatch):
     _register(monkeypatch, "fake", _AttachingHostSession)
     args = _resolve({"host_flag": "fake"})
     assert args["linked_to"] == "s1__20260101_000000"
+
+
+class _OEHost:
+    """Records how the run built and attached it."""
+
+    made: list[dict] = []
+    attached: list[dict] = []
+
+    def __init__(self, **kwargs):
+        _OEHost.made.append(kwargs)
+
+    def attach(self, subject=None):
+        from types import SimpleNamespace
+
+        _OEHost.attached.append({"subject": subject})
+        return SimpleNamespace(
+            backend="openephys", session_name="m1__20260101_000000", subject=subject
+        )
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+
+class _OldOEHost(_OEHost):
+    """A host plugin from before attach(subject=...)."""
+
+    def attach(self):  # type: ignore[override]
+        return super().attach()
+
+
+@pytest.fixture
+def oe_host(monkeypatch):
+    _OEHost.made, _OEHost.attached = [], []
+
+    def _use(cls):
+        _register(monkeypatch, "openephys", cls)
+
+    return _use
+
+
+def test_openephys_attach_requires_recording_and_the_subject(oe_host, caplog):
+    oe_host(_OEHost)
+    setup = SetupConfig(name="rig", open_ephys_url="oe-host.example")
+    with caplog.at_level("INFO"):
+        args = _resolve(
+            {"host_flag": "openephys", "setup_config": setup, "subject": "m1"}
+        )
+    assert _OEHost.made == [{"url": "oe-host.example", "require_recording": True}]
+    assert _OEHost.attached == [{"subject": "m1"}]
+    assert args["linked_to"] == "m1__20260101_000000"
+    assert "from setup yaml open_ephys_url" in caplog.text
+
+
+def test_openephys_url_from_machine_config_is_logged(oe_host, monkeypatch, caplog):
+    oe_host(_OEHost)
+    monkeypatch.setattr(
+        "murineshiftwork.logic.machine_config.read_open_ephys_url",
+        lambda: "oe-machine.example",
+    )
+    with caplog.at_level("INFO"):
+        _resolve({"host_flag": "openephys", "subject": "m1"})
+    assert "oe-machine.example (from machine config" in caplog.text
+
+
+def test_older_host_plugin_without_subject_still_attaches(oe_host):
+    oe_host(_OldOEHost)
+    args = _resolve({"host_flag": "openephys:oe-host.example", "subject": "m1"})
+    assert _OEHost.attached == [{"subject": None}]
+    assert args["linked_to"] == "m1__20260101_000000"

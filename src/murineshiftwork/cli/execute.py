@@ -8,6 +8,10 @@ from typing import Any
 
 import yaml
 
+from murineshiftwork.hardware.camera.session import (
+    reset_run_sessions,
+    run_recorded_cameras,
+)
 from murineshiftwork.hardware.simulate_guard import mark_simulated
 from murineshiftwork.logic.machine_config import (
     get_machine_config_path,
@@ -16,6 +20,14 @@ from murineshiftwork.logic.machine_config import (
 )
 from murineshiftwork.logic.misc import print_box
 from murineshiftwork.logic.run_context import RunContext
+from murineshiftwork.logic.session_lock import (
+    SetupLock,
+    interrupt_running_acquisitions,
+)
+
+#: ``msw run`` exit code: the task completed, but recorded no camera although
+#: ``record_video`` was on (``camera_failure: continue`` let it go on)
+EXIT_DEGRADED = 3
 
 # Device factory: (typed device config, resolved serial port) -> a DeviceProtocol wrapper. Keyed
 # by the device *type* (SetupConfig device.type). Adding a device = a wrapper + one entry here.
@@ -129,25 +141,42 @@ def _build_device_list(ctx: RunContext) -> list:
     return device_list
 
 
+#: device names whose type differs from the name, for a required device the setup lacks
+_SIM_TYPE_BY_NAME = {"stage": "stage_tower"}
+
+
 def _build_sim_device_list(ctx: RunContext) -> list:
     """Simulation wrappers for the required devices, each a hardware-free stand-in.
 
     Mirrors :func:`_build_device_list` for ``--simulate``: the task receives the same device
     collection it would on hardware, but the devices are hardware-free (SimBpod, sim scale,
-    :class:`SimPulsePal`, :class:`SimStage`). A required device type with no sim factory is
-    omitted. Falls back to a lone sim bpod when there is no setup.
+    :class:`SimPulsePal`, :class:`SimStage`). Every required device gets a stand-in, also when
+    the setup lacks it (its type is then the device name, ``stage`` -> ``stage_tower``), so a
+    task can be simulated on any setup. A required device type with no sim factory is omitted.
     """
-    setup_config = ctx.setup
-    required = set(ctx.task_settings.get("required_devices") or ["bpod"])
-    if setup_config is None:
-        return [_make_sim_bpod(None)]
+    required = list(
+        dict.fromkeys(ctx.task_settings.get("required_devices") or ["bpod"])
+    )
+    setup_devices = ctx.setup.devices if ctx.setup is not None else {}
     sims: list = []
-    for dev_name, dev_cfg in setup_config.devices.items():
-        if dev_name not in required:
+    for dev_name in required:
+        dev_cfg = setup_devices.get(dev_name)
+        dev_type = (
+            dev_cfg.type
+            if dev_cfg is not None
+            else _SIM_TYPE_BY_NAME.get(dev_name, dev_name)
+        )
+        factory = _SIM_DEVICE_REGISTRY.get(dev_type)
+        if factory is None:
+            logging.debug("simulate: no stand-in for device %r", dev_name)
             continue
-        factory = _SIM_DEVICE_REGISTRY.get(dev_cfg.type)
-        if factory is not None:
-            sims.append(factory(dev_cfg))
+        if dev_cfg is None and ctx.setup is not None:
+            logging.info(
+                "simulate: setup %r has no %r; using a simulated one",
+                ctx.setup_name,
+                dev_name,
+            )
+        sims.append(factory(dev_cfg))
     return sims
 
 
@@ -194,9 +223,9 @@ def run_task(**args_dict):
     """
     msw run -s subject -t task
     msw run -s subject -t task -p serial_port
-    """
-    import importlib
 
+    Returns the run's exit code: 0, or ``EXIT_DEGRADED``.
+    """
     from murineshiftwork.logic.log import suppress_third_party_console_handlers
 
     suppress_third_party_console_handlers()  # catch handlers added at import time
@@ -208,6 +237,54 @@ def run_task(**args_dict):
     # From here on every real device open refuses in a --simulate run (also in the task's
     # child process), so a task that builds its own connection cannot reach the rig.
     mark_simulated(ctx.simulate)
+    reset_run_sessions()
+    stale_camera_groups = args_dict.pop("setup_camera_groups", None)
+    with _setup_lock(ctx, stale_camera_groups):
+        _run_task_locked(ctx, args_dict)
+    logging.debug("Task finished.")
+    return _run_exit_code(ctx, args_dict)
+
+
+def _setup_lock(ctx: RunContext, camera_groups: list | None):
+    """The setup's session lock (``logic/session_lock.py``); none for a simulated run
+    (it opens no hardware) or a run without a setup.
+
+    A dead previous owner's camera groups are reset and its running acquisitions
+    marked ``interrupted`` before the lock is taken.
+    """
+    if ctx.simulate or not ctx.setup_name:
+        return contextlib.nullcontext()
+
+    def _recover(old: dict) -> None:
+        from murineshiftwork.hardware.camera.reset import reset_camera_groups
+
+        reset_camera_groups(camera_groups or [])
+        if old.get("session_container"):
+            interrupt_running_acquisitions(old["session_container"])
+
+    return SetupLock(ctx.setup_name, on_stale=_recover)
+
+
+def _run_exit_code(ctx: RunContext, args_dict: dict) -> int:
+    """``EXIT_DEGRADED`` when the run should have recorded video, the camera failure
+    policy let it go on, and no camera recorded; else 0."""
+    if ctx.simulate or not ctx.task_settings.get("record_video"):
+        return 0
+    if ctx.camera_failure != "continue" or not args_dict.get("camera_groups"):
+        return 0
+    if run_recorded_cameras():
+        return 0
+    logging.warning(
+        "Completed degraded: record_video is on but no camera recorded "
+        "(camera_failure=continue); exit code %d",
+        EXIT_DEGRADED,
+    )
+    return EXIT_DEGRADED
+
+
+def _run_task_locked(ctx: RunContext, args_dict: dict) -> None:
+    import importlib
+
     _apply_stage_position(ctx)
     mod = importlib.import_module(f"murineshiftwork.tasks.{ctx.task_name}.task")
 
@@ -242,8 +319,6 @@ def run_task(**args_dict):
     for _dropped in ("serial_port_stage", "serial_port_scale", "serial_port_pulsepal"):
         boundary_kwargs.pop(_dropped, None)
     mod.run_task(**boundary_kwargs)
-
-    logging.debug("Task finished.")
 
 
 # ---------------------------------------------------------------------------

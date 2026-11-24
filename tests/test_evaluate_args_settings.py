@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 from murineshiftwork.cli import evaluate as ev
+from murineshiftwork.logic.config.models import SUBJECT_CONFIG_SCHEMA_VERSION
 
 
 def _write_subject(config_dir, name, task_overrides=None):
@@ -19,7 +20,12 @@ def _write_subject(config_dir, name, task_overrides=None):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         yaml.safe_dump(
-            {"name": name, "aliases": [], "task_overrides": task_overrides or {}}
+            {
+                "name": name,
+                "schema_version": SUBJECT_CONFIG_SCHEMA_VERSION,
+                "aliases": [],
+                "task_overrides": task_overrides or {},
+            }
         ),
         encoding="utf-8",
     )
@@ -296,7 +302,10 @@ def test_subject_record_cameras_ignored_on_rig_without_video(
     out = run_evaluate(setup="rig1")
     assert "record_cameras" not in out["settings.task.patched"]
     assert "record_cameras" not in out["settings.task.provenance"]
-    assert out["cameras_config"].unit_names == []
+    # no video: the video groups and the legacy camera config are dropped
+    assert out["cameras_config"] is None
+    assert out["camera_groups"] == []
+    assert out["config_file_camera"] == ""
 
 
 def test_camera_failure_from_setup_and_run(run_evaluate, camera_setup):
@@ -323,3 +332,25 @@ def test_rce_data_dir_defaults_to_out_path(run_evaluate, camera_setup, tmp_path)
     [group] = out["camera_groups"]
     assert group.settings["data_dir"] == str(tmp_path / "data")
     assert out["cameras_config"].settings["data_dir"] == str(tmp_path / "data")
+
+
+def test_simulate_starts_no_camera(run_evaluate, camera_setup):
+    camera_setup({"_test_flush_valves": {"record_video": True}})
+    _write_subject(run_evaluate.config_dir, "subj001")
+    out = run_evaluate(setup="rig1", simulate=True)
+    assert out["camera_groups"] == []
+    assert out["cameras_config"] is None
+    assert out["config_file_camera"] == ""
+
+
+@pytest.mark.parametrize("version", [None, 1])
+def test_outdated_subject_config_refuses_the_run(run_evaluate, version):
+    path = run_evaluate.config_dir / "subjects" / "subj001.yaml"
+    path.parent.mkdir(parents=True)
+    raw = {"name": "subj001"}
+    if version is not None:
+        raw["schema_version"] = version
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ValueError, match="msw config migrate-subjects"):
+        run_evaluate()
+    assert not (run_evaluate.config_dir.parent / "data").exists()  # no session folder

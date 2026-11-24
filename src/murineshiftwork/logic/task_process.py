@@ -1,4 +1,5 @@
 import contextlib
+import json
 import logging
 import signal
 import threading
@@ -44,6 +45,7 @@ from murineshiftwork.logic.misc import (
 )
 from murineshiftwork.logic.paths import atomic_open_w, test_path_is_writable
 from murineshiftwork.logic.reward_metadata import build_reward_metadata
+from murineshiftwork.logic.session_lock import note_session_container
 
 
 def _resolve_hook_setup(run_context, execution_config):
@@ -424,6 +426,7 @@ class TaskProcess:
 
         _container = Path(self.session_paths["session_folder"]).parent
         init_session_manifest(_container, self.session_paths["host_session_name"])
+        note_session_container(_container)
         append_acquisition_to_session(
             _container, self.session_paths["session_basename"]
         )
@@ -556,11 +559,7 @@ class TaskProcess:
                     run_post_hooks(self._post_hooks, self._hook_ctx)
                 except SessionAbortError as exc:
                     post_exc = exc
-            status = (
-                "aborted"
-                if exc_type is not None or task_exc is not None
-                else "complete"
-            )
+            status = self._end_status(exc_type, task_exc)
             if self.session_paths:
                 _container = Path(self.session_paths["session_folder"]).parent
                 finalize_acquisition_in_session(
@@ -582,6 +581,20 @@ class TaskProcess:
             raise TaskFailedError(
                 f"task {self.task_name!r} failed: {task_exc!r}"
             ) from task_exc
+
+    def _end_status(self, exc_type, task_exc) -> str:
+        """The acquisition's session-manifest status at exit.
+
+        ``aborted``: the task or the session raised. ``stopped``: the operator ended it
+        (``stop_task``, which tasks call on Ctrl-C, or a Ctrl-C reaching here).
+        ``complete``: the task ended by itself.
+        """
+        operator_end = exc_type is not None and issubclass(exc_type, KeyboardInterrupt)
+        if task_exc is not None or (exc_type is not None and not operator_end):
+            return "aborted"
+        if self._stop_requested or operator_end:
+            return "stopped"
+        return "complete"
 
     def _start_relay(self) -> None:
         from murineshiftwork.logic.machine_config import read_log_config
@@ -716,6 +729,16 @@ class TaskProcess:
                 "host_session_name": self.session_paths.get("host_session_name", ""),
             },
         }
+        # Every session records its resolved task settings; a task may overwrite the
+        # section later (update_session_yaml) with its own view of them.
+        data["task_settings"] = json.loads(
+            json.dumps(
+                _strip_unserializable(
+                    self.input_kwargs.get("settings.task.patched") or {}
+                ),
+                default=str,
+            )
+        )
         ps_info = self.input_kwargs.get("host_session_info")
         if ps_info is not None:
             data["host_session"] = {
