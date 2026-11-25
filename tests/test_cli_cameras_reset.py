@@ -143,6 +143,48 @@ def test_reset_ok(config_dir, capsys):
     assert all_closed()
 
 
+def _write_lock(pid):
+    import socket
+
+    from murineshiftwork.logic.session_lock import lock_path
+
+    path = lock_path("rig")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump({"pid": pid, "host": socket.gethostname(), "setup": "rig"})
+    )
+    return path
+
+
+def test_reset_clears_a_dead_session_lock(config_dir, capsys, monkeypatch):
+    from murineshiftwork.logic import session_lock
+
+    path = _write_lock(999999)
+    monkeypatch.setattr(session_lock, "pid_alive", lambda pid: False)
+    assert reset_cameras("rig", config_dir=str(config_dir)) == 0
+    assert not path.exists()
+    assert "removed the lock of a dead session (pid 999999" in capsys.readouterr().out
+
+
+def test_reset_keeps_a_live_session_lock(config_dir, capsys):
+    import os
+
+    path = _write_lock(os.getppid())
+    assert reset_cameras("rig", config_dir=str(config_dir), as_json=True) == 0
+    assert path.exists()
+    assert json.loads(capsys.readouterr().out)["stale_lock_cleared"] is False
+
+
+def test_failed_reset_keeps_a_dead_session_lock(config_dir, monkeypatch):
+    from murineshiftwork.logic import session_lock
+
+    path = _write_lock(999999)
+    monkeypatch.setattr(session_lock, "pid_alive", lambda pid: False)
+    ResetBackend.fail = {"body"}
+    assert reset_cameras("rig", config_dir=str(config_dir)) == 1
+    assert path.exists()
+
+
 def test_failed_unit_exits_1(config_dir, capsys):
     ResetBackend.fail = {"body"}
     assert reset_cameras("rig", config_dir=str(config_dir), as_json=True) == 1

@@ -30,6 +30,12 @@ exception.
 Each started group is a peer acquisition in ``session_manifest.yaml`` (finalised as
 ``complete``, ``partial`` or ``failed``) and the behaviour acquisition's
 ``acquisition_manifest.yaml`` gets a ``cameras:`` block (``CamerasRecord``).
+
+Under ``--simulate`` the run resolves no camera group, and ``from_run`` returns a
+simulated session instead: it lists one stand-in ``with_video`` group when the task
+asks for video, so a task that requires a camera still runs, but it loads no
+backend, starts nothing and writes no record. Video recording is off and the log
+says so.
 """
 
 from __future__ import annotations
@@ -71,6 +77,9 @@ log = logging.getLogger(__name__)
 POLICY_RAISE = "raise"
 POLICY_CONTINUE = "continue"
 POLICIES = (POLICY_RAISE, POLICY_CONTINUE)
+
+#: name and backend of the stand-in group of a simulated session
+SIMULATED_GROUP = "simulated"
 
 STATUS_COMPLETE = "complete"
 STATUS_PARTIAL = "partial"
@@ -183,6 +192,8 @@ class CameraSession:
         groups: The groups this run records.
         policy: ``raise`` or ``continue``; see the module docstring.
         backend_loader: Creates a backend from its name (tests replace it).
+        simulated: List the groups but drive none of them (``--simulate``): open,
+            start and stop do nothing, nothing is recorded or written.
     """
 
     def __init__(
@@ -191,6 +202,7 @@ class CameraSession:
         policy: str = POLICY_RAISE,
         *,
         backend_loader: Callable[[str], CameraBackend] = load_backend,
+        simulated: bool = False,
     ) -> None:
         if policy not in POLICIES:
             raise ValueError(f"camera failure policy {policy!r}; expected {POLICIES}")
@@ -203,7 +215,10 @@ class CameraSession:
         self._stopping = False  # stop was called: start nothing more
         self._closed = False  # every group stopped and closed
         self._host_folder: str = ""
-        if self._runs:
+        self.simulated = simulated
+        #: the session was asked for video (it holds a ``with_video`` group)
+        self.requests_video = any(g.record == "with_video" for g in groups)
+        if self._runs and not simulated:
             _RUN_SESSIONS.append(self)
 
     # -- construction ------------------------------------------------------
@@ -217,6 +232,9 @@ class CameraSession:
         Groups with ``record: always`` start in every task run; ``with_video`` groups
         (already narrowed by ``record_cameras``) start when the task records video.
 
+        Under ``--simulate`` (``simulate`` in ``args_dict``) the session is simulated
+        and holds one stand-in group when the task records video.
+
         Args:
             args_dict: The resolved run (``camera_groups``, ``camera_failure``).
             record_video: Whether the task records video; defaults to the task
@@ -225,12 +243,24 @@ class CameraSession:
         if record_video is None:
             patched = args_dict.get("settings.task.patched") or {}
             record_video = bool(patched.get("record_video", False))
+        if args_dict.get("simulate"):
+            return cls._simulated(record_video)
         groups = [
             g
             for g in args_dict.get("camera_groups") or []
             if g.record == "always" or record_video
         ]
         return cls(groups, policy=run_camera_failure(args_dict))
+
+    @classmethod
+    def _simulated(cls, record_video: bool) -> CameraSession:
+        from murineshiftwork.logic.config.models import CameraGroup
+
+        groups = []
+        if record_video:
+            groups = [CameraGroup(name=SIMULATED_GROUP, backend=SIMULATED_GROUP)]
+            log.info("simulate: video recording off, no camera started")
+        return cls(groups, simulated=True)
 
     # -- public API --------------------------------------------------------
 
@@ -260,7 +290,7 @@ class CameraSession:
             CameraConfigError: A backend is missing or rejects its settings.
             CameraStartError: A camera failed preflight under the ``raise`` policy.
         """
-        if self._policy_applied or not self._runs:
+        if self._policy_applied or not self._runs or self.simulated:
             return
         failures = self.preflight()
         self._policy_applied = True
@@ -281,7 +311,7 @@ class CameraSession:
             CameraConfigError: A backend is missing or rejects its settings (the
                 backends are closed first).
         """
-        if self._opened or not self._runs:
+        if self._opened or not self._runs or self.simulated:
             return list(self._preflight_failures)
         if self._load is load_backend:
             from murineshiftwork.hardware.simulate_guard import refuse_real_hardware
@@ -319,7 +349,7 @@ class CameraSession:
         Raises:
             CameraStartError: A camera failed to start under the ``raise`` policy.
         """
-        if not self._runs:
+        if not self._runs or self.simulated:
             return
         from murineshiftwork.namespace.paths import generate_session_paths
 
@@ -363,7 +393,7 @@ class CameraSession:
             host_folder: Behaviour acquisition folder that receives the camera
                 record; empty to write none.
         """
-        if self._stopping:
+        if self._stopping or self.simulated:
             return
         self._host_folder = host_folder
         failures: list[tuple[str, UnitResult]] = []
@@ -389,7 +419,7 @@ class CameraSession:
         the record is written. A group whose stop or close was interrupted is
         tried again by the next call.
         """
-        if self._closed or not self._runs:
+        if self._closed or not self._runs or self.simulated:
             return
         self._stopping = True
         first: BaseException | None = None
@@ -649,6 +679,12 @@ def reset_run_sessions() -> None:
 def run_recorded_cameras() -> list[str]:
     """``group/camera`` of every camera recorded by this run's camera sessions."""
     return [name for s in _RUN_SESSIONS for name in s.recorded_cameras()]
+
+
+def run_requested_video() -> bool:
+    """Whether a camera session of this run was asked for video, whatever the task
+    setting that decided it."""
+    return any(s.requests_video for s in _RUN_SESSIONS)
 
 
 def run_camera_failure(args_dict: dict[str, Any]) -> str:

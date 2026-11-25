@@ -21,6 +21,12 @@ At acquire:
   run the stale handler (reset cameras left recording, mark its ``running``
   acquisitions ``interrupted``), then take the lock.
 
+A ``--simulate`` run takes the lock too (``leave_stale``), so it refuses while a
+session is live, but it leaves a dead owner's lock in place and runs without one:
+it resolves no cameras, so the camera reset of the recovery is left to the next
+run on hardware or to ``msw cameras reset``, which clears a dead owner's lock after
+resetting the cameras (``clear_stale_lock``). A live owner's lock is never removed.
+
 The lock is released by the owning process on normal exit and on exceptions
 (``finally`` plus ``atexit``). A pid reused by an unrelated process after a crash
 reads as live and refuses; remove the file by hand then.
@@ -49,8 +55,39 @@ LOCK_DIR = Path("~/.murineshiftwork/locks").expanduser()
 _held: SetupLock | None = None
 
 
+#: ``owner_state``: no lock file
+FREE = "free"
+#: ``owner_state``: held by a live pid on this host
+LIVE = "live"
+#: ``owner_state``: held on another host; its liveness cannot be checked from here
+FOREIGN = "foreign"
+#: ``owner_state``: held by a dead pid on this host, or unreadable
+STALE = "stale"
+
+
 class SessionLockError(RuntimeError):
     """Another live session holds the setup."""
+
+
+def owner_state(old: dict[str, Any] | None) -> str:
+    """``FREE``, ``LIVE``, ``FOREIGN`` or ``STALE`` for the fields of a lock file
+    (``read_lock``). This process's own pid counts as stale (a lock it left)."""
+    if old is None:
+        return FREE
+    host = str(old.get("host") or "")
+    if host and host != socket.gethostname():
+        return FOREIGN
+    pid = _owner_pid(old)
+    if pid and pid != os.getpid() and pid_alive(pid):
+        return LIVE
+    return STALE
+
+
+def _owner_pid(old: dict[str, Any]) -> int:
+    try:
+        return int(old.get("pid") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def lock_path(setup: str, lock_dir: Path | None = None) -> Path:
@@ -109,6 +146,8 @@ class SetupLock:
         on_stale: Called with the dead owner's lock fields before the lock is taken.
             Its exceptions are logged, never raised: recovery must not block the run.
         lock_dir: Lock directory (tests).
+        leave_stale: A dead owner's lock is left in place and not taken; the
+            run goes on without a lock (``--simulate``). ``on_stale`` is not run.
     """
 
     def __init__(
@@ -117,10 +156,12 @@ class SetupLock:
         *,
         on_stale: Callable[[dict[str, Any]], None] | None = None,
         lock_dir: Path | None = None,
+        leave_stale: bool = False,
     ) -> None:
         self.setup = setup
         self.path = lock_path(setup, lock_dir)
         self._on_stale = on_stale
+        self._leave_stale = leave_stale
         self._data: dict[str, Any] = {}
         self._held = False
 
@@ -135,8 +176,8 @@ class SetupLock:
         global _held
         self.path.parent.mkdir(parents=True, exist_ok=True)
         old = read_lock(self.path)
-        if old is not None:
-            self._check_owner(old)
+        if old is not None and not self._check_owner(old):
+            return
         self._data = {
             "pid": os.getpid(),
             "host": socket.gethostname(),
@@ -149,27 +190,35 @@ class SetupLock:
         _held = self
         atexit.register(self.release)
 
-    def _check_owner(self, old: dict[str, Any]) -> None:
-        try:
-            pid = int(old.get("pid") or 0)
-        except (TypeError, ValueError):
-            pid = 0
-        host = str(old.get("host") or "")
-        here = socket.gethostname()
+    def _check_owner(self, old: dict[str, Any]) -> bool:
+        """Refuse a live or foreign owner, recover a dead one. Returns whether to
+        take the lock."""
+        pid = _owner_pid(old)
         owner = (
-            f"pid {pid} on {host or '?'} since {old.get('started_at', '?')}, "
+            f"pid {pid} on {old.get('host') or '?'} since "
+            f"{old.get('started_at', '?')}, "
             f"session {old.get('session_container') or '(no folder yet)'}"
         )
-        if host and host != here:
+        state = owner_state(old)
+        if state == FOREIGN:
             raise SessionLockError(
                 f"setup {self.setup!r} is locked by {owner}. If that session is not "
                 f"running, remove {self.path}"
             )
-        if pid and pid != os.getpid() and pid_alive(pid):
+        if state == LIVE:
             raise SessionLockError(
                 f"setup {self.setup!r} is in use by a running session ({owner}). "
                 f"End it first; if pid {pid} is not an msw session, remove {self.path}"
             )
+        if self._leave_stale:
+            log.warning(
+                "Setup %r: the previous session did not end cleanly (%s); its lock "
+                "is left for the next run on hardware or 'msw cameras reset' to "
+                "recover",
+                self.setup,
+                owner,
+            )
+            return False
         log.warning(
             "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"
             "Setup %r: the previous session did not end cleanly (%s).\n"
@@ -183,6 +232,7 @@ class SetupLock:
                 self._on_stale(old)
             except Exception:  # noqa: BLE001 - recovery never blocks the new run
                 log.warning("stale session recovery failed", exc_info=True)
+        return True
 
     def set_container(self, container: str | Path) -> None:
         if not self._held:
@@ -210,6 +260,26 @@ class SetupLock:
         tmp = self.path.with_suffix(".lock.tmp")
         tmp.write_text(yaml.safe_dump(self._data, sort_keys=False))
         tmp.replace(self.path)
+
+
+def clear_stale_lock(setup: str, lock_dir: Path | None = None) -> dict[str, Any] | None:
+    """Remove the lock of ``setup`` when its owner is dead (``STALE``), after
+    marking the owner's ``running`` acquisitions ``interrupted``.
+
+    A live or foreign owner's lock, or no lock, is left alone.
+
+    Returns:
+        The removed lock's fields, or None when nothing was removed.
+    """
+    path = lock_path(setup, lock_dir)
+    old = read_lock(path)
+    if old is None or owner_state(old) != STALE:
+        return None
+    if old.get("session_container"):
+        interrupt_running_acquisitions(old["session_container"])
+    path.unlink(missing_ok=True)
+    log.warning("setup %r: removed the lock of a dead session (%s)", setup, path)
+    return old
 
 
 def interrupt_running_acquisitions(container: str | Path) -> list[str]:
