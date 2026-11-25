@@ -27,12 +27,17 @@ live process on this host, or by another host, refuses the run. A lock left by a
 dead process means that session was killed: the run warns, resets the setup's
 camera groups whose backend implements `ResettableCameraBackend` (each camera saves
 what it recorded), marks that session's `running` acquisitions `interrupted`, then
-takes the lock. A simulated run takes no lock.
+takes the lock. A simulated run takes the lock too and refuses a live one, but
+leaves a dead session's lock in place (it resolves no cameras to reset) and runs
+without one.
 
 **`--simulate`** opens no hardware: every device the task requires
 (`required_devices`) is a stand-in, also one the setup lacks; no camera group
 starts and `CameraSession` refuses real camera backends; a `Stimulation` that
-connects its own PulsePal gets a `SimPulsePal`.
+connects its own PulsePal gets a `SimPulsePal`. A task that asks for video gets a
+simulated `CameraSession` from `CameraSession.from_run`: it lists one stand-in
+`with_video` group, so a task that requires a camera runs, but starts and records
+nothing; the log says video recording is off.
 
 **`record_video: false`** starts no `with_video` camera group and gives the
 deprecated `make_camera_client` no camera config; `record: always` groups still run.
@@ -46,7 +51,8 @@ Every session's `.msw.session.yaml` holds the resolved `task_settings`; a task m
 overwrite the section.
 
 Exit codes: `0` completed, `1` failed (including a Bpod that does not connect and a
-setup in use), `3` completed degraded: `record_video` was on, `camera_failure:
+setup in use), `3` completed degraded: the task asked for video (`record_video` on,
+or a camera session of the task holding a `with_video` group), `camera_failure:
 continue` let the run go on, and no camera recorded.
 
 ## Checking the cameras of a setup
@@ -105,6 +111,9 @@ loaded and configured as in `msw cameras check`; a backend implementing
 `ResettableCameraBackend` (msw-plugin-api) is asked to `reset()`, which saves and
 ends whatever its units are recording and reports each camera. Backends without it
 are listed as `no reset`. A group that fails to load does not stop the others.
+When every camera reset, a lock left on the setup by a dead session on this machine
+is removed and that session's `running` acquisitions are marked `interrupted`; a
+live session's lock is never touched.
 
 Use: when a sign-off or `cameras check` finds a camera busy, or after a crashed
 session. Exit codes: `0` every reset camera ok, `1` a camera failed to reset, `2` a

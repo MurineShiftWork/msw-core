@@ -11,6 +11,7 @@ import yaml
 from murineshiftwork.hardware.camera.session import (
     reset_run_sessions,
     run_recorded_cameras,
+    run_requested_video,
 )
 from murineshiftwork.hardware.simulate_guard import mark_simulated
 from murineshiftwork.logic.machine_config import (
@@ -25,8 +26,8 @@ from murineshiftwork.logic.session_lock import (
     interrupt_running_acquisitions,
 )
 
-#: ``msw run`` exit code: the task completed, but recorded no camera although
-#: ``record_video`` was on (``camera_failure: continue`` let it go on)
+#: ``msw run`` exit code: the task completed, but recorded no camera although it
+#: asked for video (``camera_failure: continue`` let it go on)
 EXIT_DEGRADED = 3
 
 # Device factory: (typed device config, resolved serial port) -> a DeviceProtocol wrapper. Keyed
@@ -246,14 +247,18 @@ def run_task(**args_dict):
 
 
 def _setup_lock(ctx: RunContext, camera_groups: list | None):
-    """The setup's session lock (``logic/session_lock.py``); none for a simulated run
-    (it opens no hardware) or a run without a setup.
+    """The setup's session lock (``logic/session_lock.py``); none for a run without
+    a setup.
 
     A dead previous owner's camera groups are reset and its running acquisitions
-    marked ``interrupted`` before the lock is taken.
+    marked ``interrupted`` before the lock is taken. A simulated run refuses a live
+    owner like any run, but leaves a dead owner's lock in place: it resolves no
+    camera groups, so it cannot do the camera reset of the recovery.
     """
-    if ctx.simulate or not ctx.setup_name:
+    if not ctx.setup_name:
         return contextlib.nullcontext()
+    if ctx.simulate:
+        return SetupLock(ctx.setup_name, leave_stale=True)
 
     def _recover(old: dict) -> None:
         from murineshiftwork.hardware.camera.reset import reset_camera_groups
@@ -267,15 +272,22 @@ def _setup_lock(ctx: RunContext, camera_groups: list | None):
 
 def _run_exit_code(ctx: RunContext, args_dict: dict) -> int:
     """``EXIT_DEGRADED`` when the run should have recorded video, the camera failure
-    policy let it go on, and no camera recorded; else 0."""
-    if ctx.simulate or not ctx.task_settings.get("record_video"):
+    policy let it go on, and no camera recorded; else 0.
+
+    The run asked for video when the task setting ``record_video`` is on or a camera
+    session of the task holds a ``with_video`` group: a task that records video by
+    nature, or decides it from its own settings, has no ``record_video`` setting.
+    """
+    if ctx.simulate:
+        return 0
+    if not (ctx.task_settings.get("record_video") or run_requested_video()):
         return 0
     if ctx.camera_failure != "continue" or not args_dict.get("camera_groups"):
         return 0
     if run_recorded_cameras():
         return 0
     logging.warning(
-        "Completed degraded: record_video is on but no camera recorded "
+        "Completed degraded: the task asked for video but no camera recorded "
         "(camera_failure=continue); exit code %d",
         EXIT_DEGRADED,
     )

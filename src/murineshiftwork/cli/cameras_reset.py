@@ -11,6 +11,12 @@ without ``reset`` is listed as ``no reset``. Every backend is closed afterwards.
 A group whose backend cannot be loaded or refuses its settings is reported and
 the other groups are still reset.
 
+When every camera reset (or the setup has none to reset), the setup's session
+lock is cleared if its owner is dead: that session's ``running`` acquisitions are
+marked ``interrupted`` and the lock file removed, as the next run would on taking
+it. A live session's lock is never touched; after a failed reset a dead owner's
+lock stays, so the next run tries the recovery again.
+
 Exit codes: 0 every reset camera ok, 1 a camera failed to reset, 2 a config
 error (setup not found, a backend missing or refusing its settings, an installed
 msw-plugin-api without ``ResettableCameraBackend``).
@@ -160,10 +166,16 @@ def reset_cameras(setup: str, config_dir: str = "", as_json: bool = False) -> in
         code = EXIT_FAILED
     else:
         code = EXIT_OK
-    out.update(ok=code == EXIT_OK, groups=reports)
+    cleared = _clear_stale_lock(setup) if code == EXIT_OK else None
+    out.update(ok=code == EXIT_OK, groups=reports, stale_lock_cleared=bool(cleared))
     if as_json:
         print(json.dumps(out, indent=2, default=str))
         return code
+    if cleared is not None:
+        print(
+            f"removed the lock of a dead session (pid {cleared.get('pid', '?')}, "
+            f"session {cleared.get('session_container') or '(no folder)'})"
+        )
     if not reports:
         print(f"no camera groups in setup {setup!r}")
         return code
@@ -175,6 +187,16 @@ def reset_cameras(setup: str, config_dir: str = "", as_json: bool = False) -> in
         summary += f"; no reset: {', '.join(no_reset)}"
     print(summary)
     return code
+
+
+def _clear_stale_lock(setup: str) -> dict[str, Any] | None:
+    from murineshiftwork.logic.session_lock import clear_stale_lock
+
+    try:
+        return clear_stale_lock(setup)
+    except Exception as exc:  # noqa: BLE001 - the cameras are reset; report, go on
+        print(f"stale session lock not cleared: {exc}", file=sys.stderr)
+        return None
 
 
 def _config_error(out: dict[str, Any], message: str, as_json: bool) -> int:

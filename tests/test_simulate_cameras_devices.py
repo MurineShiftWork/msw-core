@@ -67,6 +67,32 @@ def test_camera_session_with_an_injected_backend_runs_when_simulated():
     session.stop()
 
 
+def test_simulated_session_stands_in_for_a_video_task(caplog, tmp_path):
+    from murineshiftwork.hardware.camera import session as camera_session
+
+    mark_simulated(True)
+    camera_session.reset_run_sessions()
+    args = {"simulate": True, "camera_groups": []}
+    with caplog.at_level("INFO"):
+        cams = CameraSession.from_run(args, record_video=True)
+    # a task that requires a camera group finds one, and nothing is driven
+    assert cams
+    assert [g.record for g in cams.groups] == ["with_video"]
+    cams.open()
+    cams.start({"session_folder": str(tmp_path)})
+    cams.stop("completed")
+    assert cams.recorded_cameras() == []
+    assert camera_session.run_requested_video() is False
+    assert list(tmp_path.iterdir()) == []
+    assert "simulate: video recording off" in caplog.text
+
+
+def test_simulated_session_without_video_is_empty():
+    assert not CameraSession.from_run(
+        {"simulate": True, "settings.task.patched": {"record_video": False}}
+    )
+
+
 def _names(devices) -> list[str]:
     return [d.name for d in devices]
 

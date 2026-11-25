@@ -1,5 +1,6 @@
-"""`msw run` exits 3 ("completed degraded") when video was on, the camera failure
-policy let the run go on, and no camera recorded."""
+"""`msw run` exits 3 ("completed degraded") when the task asked for video (the
+``record_video`` setting, or a camera session with a ``with_video`` group), the
+camera failure policy let the run go on, and no camera recorded."""
 
 from __future__ import annotations
 
@@ -51,16 +52,17 @@ class _Backend:
 
 
 GROUP = CameraGroup(name="top", backend="fake")
+ALWAYS = CameraGroup(name="top", backend="fake", record="always")
 
 
-def _task(cameras_ok: bool | None):
+def _task(cameras_ok: bool | None, group: CameraGroup = GROUP):
     """A task that drives one camera group through CameraSession (None: no camera)."""
 
     def run_task(**kw):
         if cameras_ok is None:
             return
         session = CameraSession(
-            [GROUP], policy="continue", backend_loader=lambda _: _Backend(cameras_ok)
+            [group], policy="continue", backend_loader=lambda _: _Backend(cameras_ok)
         )
         session.open()
         session.start_targets(
@@ -71,8 +73,16 @@ def _task(cameras_ok: bool | None):
     return run_task
 
 
-def _run(monkeypatch, tmp_path, *, cameras_ok, record_video=True, policy="continue"):
-    fake_mod = SimpleNamespace(run_task=_task(cameras_ok))
+def _run(
+    monkeypatch,
+    tmp_path,
+    *,
+    cameras_ok,
+    record_video=True,
+    policy="continue",
+    group=GROUP,
+):
+    fake_mod = SimpleNamespace(run_task=_task(cameras_ok, group))
     monkeypatch.setattr(importlib, "import_module", lambda _name: fake_mod)
     ctx = RunContext(
         command="run",
@@ -80,7 +90,7 @@ def _run(monkeypatch, tmp_path, *, cameras_ok, record_video=True, policy="contin
         task_name="demo",
         out_path=str(tmp_path),
         camera_failure=policy,
-        task_settings={"record_video": record_video},
+        task_settings={} if record_video is None else {"record_video": record_video},
     )
     return execute.run_task(run_context=ctx, camera_groups=[GROUP])
 
@@ -97,8 +107,20 @@ def test_a_recorded_camera_exits_0(monkeypatch, tmp_path):
     assert _run(monkeypatch, tmp_path, cameras_ok=True) == 0
 
 
+def test_a_task_asking_for_video_without_the_setting_is_degraded(monkeypatch, tmp_path):
+    # a task that records video by nature has no record_video setting
+    code = _run(monkeypatch, tmp_path, cameras_ok=False, record_video=None)
+    assert code == execute.EXIT_DEGRADED
+
+
 @pytest.mark.parametrize(
-    "kw", [{"record_video": False}, {"policy": "raise"}], ids=["no-video", "raise"]
+    "kw",
+    [
+        {"record_video": False, "group": ALWAYS},
+        {"record_video": None, "group": ALWAYS},
+        {"policy": "raise"},
+    ],
+    ids=["no-video", "no-setting", "raise"],
 )
 def test_only_video_runs_under_continue_are_degraded(monkeypatch, tmp_path, kw):
     assert _run(monkeypatch, tmp_path, cameras_ok=False, **kw) == 0

@@ -225,9 +225,67 @@ def test_run_task_refuses_a_setup_in_use(monkeypatch, tmp_path):
         _run(monkeypatch, tmp_path)
 
 
-def test_simulated_run_takes_no_lock(monkeypatch, tmp_path):
+def test_simulated_run_refuses_a_setup_in_use(monkeypatch, tmp_path):
     _write_lock(pid=os.getppid())
-    _run(monkeypatch, tmp_path, simulate=True)  # a live lock does not refuse it
+    with pytest.raises(SessionLockError):
+        _run(monkeypatch, tmp_path, simulate=True)
+
+
+def test_simulated_run_holds_the_lock(monkeypatch, tmp_path):
+    held = []
+    _run(
+        monkeypatch,
+        tmp_path,
+        simulate=True,
+        task=lambda **kw: held.append(read_lock(lock_path("rig"))),
+    )
+    assert held[0]["pid"] == os.getpid()
+    assert not lock_path("rig").exists()
+
+
+def test_simulated_run_leaves_a_dead_session_lock(monkeypatch, tmp_path):
+    container = _session_container(tmp_path)
+    path = _write_lock(session_container=str(container))
+    monkeypatch.setattr(session_lock, "pid_alive", lambda pid: False)
+    loaded = []
+    monkeypatch.setattr(camera_reset, "load_backend", loaded.append)
+    _run(monkeypatch, tmp_path, simulate=True)
+    assert loaded == []
+    assert read_lock(path)["pid"] == 999999
+    assert _statuses(container)["behaviour"] == "running"
+
+
+def test_leave_stale_warns_and_takes_no_lock(caplog):
+    path = _write_lock()
+    with caplog.at_level(logging.WARNING), SetupLock("rig", leave_stale=True):
+        assert read_lock(path)["pid"] == 999999
+    assert path.exists()
+    assert "left for the next run" in caplog.text
+
+
+# --- clear_stale_lock ---
+
+
+def test_clear_stale_lock_removes_a_dead_owner(monkeypatch, tmp_path):
+    container = _session_container(tmp_path)
+    path = _write_lock(session_container=str(container))
+    monkeypatch.setattr(session_lock, "pid_alive", lambda pid: False)
+    assert session_lock.clear_stale_lock("rig")["pid"] == 999999
+    assert not path.exists()
+    assert _statuses(container)["behaviour"] == "interrupted"
+
+
+@pytest.mark.parametrize(
+    "fields", [{"pid": os.getppid()}, {"host": "elsewhere"}], ids=["live", "foreign"]
+)
+def test_clear_stale_lock_keeps_a_live_or_foreign_owner(fields):
+    path = _write_lock(**fields)
+    assert session_lock.clear_stale_lock("rig") is None
+    assert path.exists()
+
+
+def test_clear_stale_lock_without_a_lock():
+    assert session_lock.clear_stale_lock("rig") is None
 
 
 def test_run_task_recovers_a_dead_session(monkeypatch, tmp_path):
