@@ -97,6 +97,7 @@ def test_unknown_host_type_aborts_and_lists_the_registered(monkeypatch):
     with pytest.raises(RuntimeError, match="could not attach") as err:
         _resolve({"host_flag": "photo"})
     assert "registered: openephys" in str(err.value)
+    assert "run msw oe record first" in str(err.value)
 
 
 def test_unknown_host_type_with_force_standalone_records_standalone(monkeypatch):

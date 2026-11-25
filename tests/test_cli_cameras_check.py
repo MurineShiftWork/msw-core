@@ -270,3 +270,25 @@ def test_parser_registers_cameras_check():
     args = parse_args(["cameras", "check", "rig", "--task", "seq", "--json"])
     assert (args["setup"], args["task"], args["as_json"]) == ("rig", "seq", True)
     assert args["func"].__name__ == "run_cameras_check"
+
+
+def test_parser_accepts_setup_as_an_option():
+    args = parse_args(["cameras", "check", "--setup", "rig"])
+    assert (args["setup"], args["setup_flag"]) == ("", "rig")
+
+
+@pytest.mark.parametrize(
+    ("setup", "flag", "code"),
+    [("", "rig", 0), ("rig", "", 0), ("rig", "rig", 0), ("rig", "x", 2), ("", "", 2)],
+)
+def test_run_cameras_check_takes_either_form(monkeypatch, setup, flag, code):
+    from murineshiftwork.cli import cameras
+
+    seen = []
+    monkeypatch.setattr(
+        cameras, "check_cameras", lambda s, **kw: seen.append(s) or cameras.EXIT_READY
+    )
+    with pytest.raises(SystemExit) as exc:
+        cameras.run_cameras_check(setup=setup, setup_flag=flag)
+    assert exc.value.code == code
+    assert seen == (["rig"] if code == 0 else [])

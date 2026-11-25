@@ -8,7 +8,11 @@ file that passes here loads in a run. On top of the model, a file gets:
   installed on this machine; no ``bpod_valve`` calibration on a setup with a Bpod
   (a run then falls back to generic open times); calibrations older than
   ``stale_days``; with ``check_ports``, device ports that do not resolve on this
-  machine (an unresolvable ``port_by_path``, a missing ``/dev`` node).
+  machine (an unresolvable ``port_by_path``, a missing ``/dev`` node). Ports are
+  checked only for the one setup asked for: a config dir is shared by the machines
+  of several setups and records no setup to machine binding, so over every setup
+  the ports of other machines' setups would fail here. Without a setup the report
+  notes that ports were not checked.
 - subject: ``schema_version`` missing, older (a run migrates it in memory; ``msw
   config migrate-subjects`` writes it) or newer than this software
   (``SUBJECT_CONFIG_SCHEMA_VERSION``); ``name`` matching the file stem;
@@ -304,11 +308,17 @@ def validate_configs(
 
     report = ValidationReport(config_dir=str(root))
     tasks = _Tasks()
+    ports = check_ports and bool(setup)
     for path in setup_files:
-        report.files.append(validate_setup_file(path, tasks, report, check_ports))
+        report.files.append(validate_setup_file(path, tasks, report, ports))
     for path in subject_files:
         report.files.append(validate_subject_file(path, tasks, report))
-    if not check_ports:
+    if check_ports and not setup:
+        report.notes.append(
+            "device ports not checked: with several setups the ports of other "
+            "machines' setups would fail here; pass --setup <setup> --check-ports"
+        )
+    elif not check_ports:
         report.notes.append("device ports not checked (pass --check-ports)")
     return report
 

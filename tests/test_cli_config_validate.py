@@ -127,6 +127,19 @@ def test_check_ports(cfg, capsys):
     )
 
 
+def test_check_ports_only_for_the_given_setup(cfg, capsys):
+    # another machine's setup in the shared config dir: its port is absent here
+    other = _good_setup("other")
+    other["devices"] = {"bpod": {"type": "bpod", "port": "/dev/ttyNOPE99"}}
+    _write(cfg / "setups" / "other.yaml", other)
+    code, report = _run(cfg, capsys, check_ports=True)
+    assert code == 0
+    assert _findings(report, "other") == []
+    assert any("pass --setup <setup> --check-ports" in n for n in report["notes"])
+    code, report = _run(cfg, capsys, setup="other", check_ports=True)
+    assert code == 1
+
+
 def test_subjects(cfg, capsys):
     current = SUBJECT_CONFIG_SCHEMA_VERSION
     subjects = cfg / "subjects"

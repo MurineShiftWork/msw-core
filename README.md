@@ -58,7 +58,7 @@ continue` let the run go on, and no camera recorded.
 ## Checking the cameras of a setup
 
 ```sh
-msw cameras check <setup> [--task <task>] [--json]
+msw cameras check (<setup> | --setup <setup>) [--task <task>] [--json]
 ```
 
 Loads, configures and preflights the setup's camera groups through their backends and
@@ -90,9 +90,11 @@ or model errors, a subject `schema_version` newer than this software, a valve
 calibration without points) and `warning`s (`name` not matching the file name, a
 subject `schema_version` missing or older, `task_overrides` for tasks not installed on
 this machine, a Bpod setup without `bpod_valve` calibrations, calibrations older than
-`stale_days`). `--check-ports` also resolves every device port on this machine: an
-unresolvable `port_by_path` or a missing `/dev` node is an error; a Windows `COM` port
-cannot be checked without opening it and is accepted. Which valves a task rewards is
+`stale_days`). `--check-ports` with `--setup` also resolves every device port of that
+setup on this machine: an unresolvable `port_by_path` or a missing `/dev` node is an
+error; a Windows `COM` port cannot be checked without opening it and is accepted.
+Without `--setup` ports are not checked and the report says so: a config dir shared
+by several machines does not say which setups run here. Which valves a task rewards is
 not checked: setups name no tasks of their own.
 
 Use: on the machine that holds the configs, before a sign-off, and per rig with

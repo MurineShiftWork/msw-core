@@ -716,6 +716,8 @@ def make_subparser_config(sub_parsers):
             subject schema_version missing/older/newer, task_overrides for tasks not
             installed here, missing or stale valve calibrations, and with
             --check-ports device ports that do not resolve on this machine.
+            Ports are checked only for the setup given with --setup: a config
+            dir shared by several machines does not say which setups run here.
 
             Exit codes: 0 no errors (no warnings either with --strict), 1 findings,
             2 config dir or setup not found.
@@ -737,7 +739,8 @@ def make_subparser_config(sub_parsers):
         "--check-ports",
         action="store_true",
         dest="check_ports",
-        help="Resolve each device port on this machine (port_by_path, /dev nodes)",
+        help="Resolve each device port of the --setup setup on this machine "
+        "(port_by_path, /dev nodes)",
     )
     pv.add_argument("--strict", action="store_true", help="Exit 1 on warnings as well")
     pv.add_argument(
@@ -758,6 +761,7 @@ def make_subparser_cameras(sub_parsers):
 
             Commands:
               msw cameras check <setup>              Preflight every camera group
+                                                     (or --setup <setup>)
               msw cameras check <setup> -t <task>    Only the groups a run of the task starts
               msw cameras reset --setup <setup>      End recordings left running on the cameras
 
@@ -785,7 +789,18 @@ def make_subparser_cameras(sub_parsers):
         epilog=_CREDIT_EPILOG,
     )
     pc.add_argument(
-        "setup", type=str, help="Setup name (config_dir/setups/<name>.yaml)"
+        "setup",
+        type=str,
+        nargs="?",
+        default="",
+        help="Setup name (config_dir/setups/<name>.yaml)",
+    )
+    pc.add_argument(
+        "--setup",
+        type=str,
+        default="",
+        dest="setup_flag",
+        help="Setup name, as an option (same as the positional setup)",
     )
     pc.add_argument(
         "-t",

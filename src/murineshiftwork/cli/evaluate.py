@@ -660,7 +660,7 @@ def _host_unavailable(
             f"  Session paths cannot be determined: aborting to avoid saving\n"
             f"  data to the wrong location.\n\n"
             f"  Options:\n"
-            f"    1. Fix the issue (run oe-remote record first, check URL)\n"
+            f"    1. Fix the issue (run msw oe record first, check URL)\n"
             f"    2. Use --link-to ACQUISITION_NAME to set the path manually\n"
             f"    3. Pass --force-standalone to intentionally run without a host\n"
         )
