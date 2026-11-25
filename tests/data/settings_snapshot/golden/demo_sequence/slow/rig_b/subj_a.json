@@ -1,0 +1,55 @@
+{
+  "combination": {
+    "mode": "slow",
+    "setup": "rig_b",
+    "subject": "subj_a",
+    "task": "demo_sequence"
+  },
+  "provenance": {
+    "block.length": "subject:<config_dir>/subjects/subj_a.yaml",
+    "block.reversal": "overlay:<config_dir>/tasks/demo_sequence/task.yaml",
+    "calibration_file_liquid": "injected",
+    "calibration_file_sound": "injected",
+    "calibration_file_stage": "injected",
+    "config_dir": "injected",
+    "iti": "subject:<config_dir>/subjects/subj_a.yaml",
+    "record_video": "setup:<config_dir>/setups/rig_b.yaml",
+    "serial_port_pulsepal": "injected",
+    "serial_port_scale": "injected",
+    "serial_port_stage": "injected",
+    "settings.stage": "injected"
+  },
+  "run": {
+    "acq_type": "msw",
+    "camera_failure": "raise",
+    "camera_groups": [],
+    "config_file_camera": "",
+    "serial_port_bpod": "COM3",
+    "serial_port_pulsepal": "/dev/serial/by-path/pci-0000:00:00.0-usb-0:0:2.0",
+    "serial_port_scale": "/dev/ttyACM2",
+    "serial_port_stage": "/dev/ttyUSB0",
+    "session_version": null
+  },
+  "settings": {
+    "block": {
+      "length": 40,
+      "reversal": true
+    },
+    "calibration_file_liquid": "",
+    "calibration_file_sound": "",
+    "calibration_file_stage": "<machine>/calibration.stage.default.yaml",
+    "config_dir": "<config_dir>",
+    "iti": 0.75,
+    "record_video": false,
+    "serial_port_pulsepal": "/dev/serial/by-path/pci-0000:00:00.0-usb-0:0:2.0",
+    "serial_port_scale": "/dev/ttyACM2",
+    "serial_port_stage": "/dev/ttyUSB0",
+    "settings.stage": {},
+    "valve_s_for_ul": "<callable>"
+  },
+  "valve_s_for_ul": {
+    "1@1.0": 0.01036,
+    "1@2.0": 0.01959,
+    "1@5.0": 0.045689
+  }
+}

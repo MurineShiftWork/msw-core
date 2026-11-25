@@ -1,0 +1,9 @@
+---
+schema_version: 2
+name: subj_a
+aliases: []
+task_overrides:
+  demo_sequence:
+    iti: 0.75
+    block:
+      length: 40

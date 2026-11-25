@@ -1,0 +1,12 @@
+{
+  "combination": {
+    "mode": "",
+    "setup": "rig_b",
+    "subject": "subj_b",
+    "task": "_test_flush_valves"
+  },
+  "error": {
+    "message": "subject:<config_dir>/subjects/subj_b.yaml: task_overrides._test_flush_valves.task_mode = 'fast' is no longer supported. Modes are chosen per run with --task-mode; remove the key from the subject config (the sequence task's `python -m murineshiftwork.tasks.sequence.migrate <config_dir>` does this for you).",
+    "type": "StickyTaskModeError"
+  }
+}

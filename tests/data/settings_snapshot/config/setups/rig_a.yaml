@@ -1,0 +1,51 @@
+---
+name: rig_a
+devices:
+  bpod:
+    type: bpod
+    port: ttyACM0
+  stage:
+    type: stage_tower
+    port_by_path: pci-0000:00:00.0-usb-0:0:1.0-port0
+    axes:
+      x:
+        id: 11
+        position_min: 90
+        position_max: 660
+        velocity_max: 0
+        operating_mode: OP_POSITION
+    known_positions:
+      back:
+        x:
+          position_raw: 600
+  scale:
+    type: scale
+    scale_type: bench
+    baudrate: 9600
+    port: /dev/ttyUSB1
+cameras:
+  - name: top
+    backend: rce
+    settings:
+      config: device_configs/cameras/rig_a.cameras.yaml
+camera_failure: continue
+calibrations:
+  bpod_valve:
+    '1':
+      updated: '2026-01-15T10:00:00'
+      points:
+      - [0.0122, 0.566]
+      - [0.0581, 4.0]
+      - [0.0926, 6.917]
+      - [0.127, 9.627]
+    '2':
+      updated: '2026-01-15T10:30:00'
+      fit_model: linear
+      points:
+      - [0.0114, 0.824]
+      - [0.0807, 6.528]
+      - [0.15, 12.1]
+task_overrides:
+  _test_flush_valves:
+    N_FLUSH_CYCLES: 5
+    record_video: true

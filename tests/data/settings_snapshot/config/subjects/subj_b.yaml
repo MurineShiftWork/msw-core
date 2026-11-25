@@ -1,0 +1,7 @@
+---
+schema_version: 2
+name: subj_b
+aliases: []
+task_overrides:
+  _test_flush_valves:
+    task_mode: fast
