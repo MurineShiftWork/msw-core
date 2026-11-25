@@ -211,7 +211,25 @@ def _config_error(out: dict[str, Any], message: str, as_json: bool) -> int:
 
 
 def run_cameras_check(
-    setup: str = "", task: str = "", config_dir: str = "", as_json: bool = False, **_
+    setup: str = "",
+    task: str = "",
+    config_dir: str = "",
+    as_json: bool = False,
+    setup_flag: str = "",
+    **_,
 ) -> None:
-    """Handler for ``msw cameras check``."""
+    """Handler for ``msw cameras check``; the setup is positional or ``--setup``."""
+    if setup and setup_flag and setup != setup_flag:
+        print(
+            f"cameras check: two setups given ({setup!r} and --setup {setup_flag!r})",
+            file=sys.stderr,
+        )
+        sys.exit(EXIT_CONFIG_ERROR)
+    setup = setup or setup_flag
+    if not setup:
+        print(
+            "cameras check: a setup is required: msw cameras check --setup <setup>",
+            file=sys.stderr,
+        )
+        sys.exit(EXIT_CONFIG_ERROR)
     sys.exit(check_cameras(setup, task=task, config_dir=config_dir, as_json=as_json))
