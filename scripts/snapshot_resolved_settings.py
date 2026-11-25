@@ -16,6 +16,9 @@ Machine-local inputs are kept out: the default calibration files under the home 
 pointed at an empty directory, and ``port_by_path`` ports resolve to their by-path name without
 checking that the device exists.
 
+Combinations are independent; ``--workers`` spreads them over processes. Within one
+process the valve calibration fit is cached by its points and model.
+
 Tasks are those the tree names: overlay dirs under ``tasks/`` and the keys of every
 ``task_overrides`` in ``setups/`` and ``subjects/``, plus any given with ``--task``. Modes are the
 task's bundled and overlay modes, plus no mode.
@@ -32,7 +35,9 @@ import logging
 import sys
 import tempfile
 from collections import Counter
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable
+from concurrent.futures import ProcessPoolExecutor
+from functools import cache
 from pathlib import Path
 from unittest.mock import patch
 
@@ -89,18 +94,6 @@ def task_modes(config_dir: Path, task: str, task_dir: Path | None) -> list[str]:
         read_task_modes(str(overlay)) if overlay.exists() else {},
     )
     return ["", *sorted(modes)]
-
-
-def combinations(
-    config_dir: Path, task_dirs: dict[str, Path], tasks: list[str]
-) -> Iterator[tuple[str, str, str, str]]:
-    setups = _names(config_dir, "setups")
-    subjects = _names(config_dir, "subjects")
-    for task in tasks:
-        for mode in task_modes(config_dir, task, task_dirs.get(task)):
-            for setup in setups:
-                for subject in subjects:
-                    yield task, mode, setup, subject
 
 
 class _Normaliser:
@@ -199,9 +192,20 @@ def resolve_one(
 def _isolated(machine_dir: Path):
     """Stub the run's side effects and machine-local inputs (no hardware, no logging setup)."""
     from murineshiftwork.cli import evaluate as ev
+    from murineshiftwork.cli import parser
+    from murineshiftwork.logic.calibration import valve_fitting
     from murineshiftwork.logic.config.models import SerialDevice
 
     resolve_port = SerialDevice.resolve_port
+    fit = valve_fitting.fit
+
+    @cache
+    def _cached_fit(points: tuple, fit_model: str) -> tuple[float, ...]:
+        return fit([list(p) for p in points], fit_model)
+
+    def cached_fit(points, fit_model):
+        # a pure function of its arguments; refitting per sample dominated the run time
+        return _cached_fit(tuple(tuple(p) for p in points), fit_model)
 
     def by_path(self):
         if self.port:
@@ -228,24 +232,25 @@ def _isolated(machine_dir: Path):
                 str(machine_dir / "calibration.stage.default.yaml"),
             ),
             patch.object(SerialDevice, "resolve_port", by_path),
+            patch.object(valve_fitting, "fit", cached_fit),
+            # the help text's version banner reads package metadata on every parse
+            patch.object(parser, "msw_version_banner", return_value=""),
         ):
             yield
     finally:
         root.setLevel(level)
 
 
-def snapshot(
-    config_dir: str | Path, out_dir: str | Path, extra_tasks: Iterable[str] = ()
+def _snapshot_group(
+    config_dir: Path,
+    out_dir: Path,
+    task_dirs: dict[str, Path],
+    task: str,
+    mode: str,
+    setups: list[str],
+    subjects: list[str],
 ) -> Counter:
-    """Write one JSON record per combination into ``out_dir``; return counts by outcome."""
-    from murineshiftwork.cli.tasks import list_available_tasks
-
-    config_dir = Path(config_dir)
-    out_dir = Path(out_dir)
-    if out_dir.exists() and any(out_dir.iterdir()):
-        raise SystemExit(f"{out_dir} is not empty: snapshot into a fresh directory")
-    task_dirs = {k: Path(v) for k, v in list_available_tasks(detailed=True).items()}
-    tasks = sorted(set(tree_tasks(config_dir)) | set(extra_tasks))
+    """Snapshot every setup x subject of one task and mode."""
     counts: Counter = Counter()
     with tempfile.TemporaryDirectory() as tmp, _isolated(Path(tmp) / "machine"):
         run_out = Path(tmp) / "out"
@@ -257,29 +262,66 @@ def snapshot(
                 **{d: f"<task_dir:{t}>" for t, d in task_dirs.items()},
             }
         )
-        for task, mode, setup, subject in combinations(config_dir, task_dirs, tasks):
-            record: dict = {
-                "combination": {
-                    "task": task,
-                    "mode": mode,
-                    "setup": setup,
-                    "subject": subject,
+        for setup in setups:
+            for subject in subjects:
+                record: dict = {
+                    "combination": {
+                        "task": task,
+                        "mode": mode,
+                        "setup": setup,
+                        "subject": subject,
+                    }
                 }
-            }
-            try:
-                record.update(
-                    resolve_one(config_dir, run_out, task, mode, setup, subject)
+                try:
+                    record.update(
+                        resolve_one(config_dir, run_out, task, mode, setup, subject)
+                    )
+                    counts["resolved"] += 1
+                except (Exception, SystemExit) as exc:
+                    record["error"] = {
+                        "type": type(exc).__name__,
+                        "message": _message(exc),
+                    }
+                    counts[f"error:{type(exc).__name__}"] += 1
+                path = out_dir / task / (mode or NO_MODE) / setup / f"{subject}.json"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(
+                    json.dumps(norm(record), indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
                 )
-                counts["resolved"] += 1
-            except (Exception, SystemExit) as exc:
-                record["error"] = {"type": type(exc).__name__, "message": _message(exc)}
-                counts[f"error:{type(exc).__name__}"] += 1
-            path = out_dir / task / (mode or NO_MODE) / setup / f"{subject}.json"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                json.dumps(norm(record), indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
+    return counts
+
+
+def snapshot(
+    config_dir: str | Path,
+    out_dir: str | Path,
+    extra_tasks: Iterable[str] = (),
+    workers: int = 1,
+) -> Counter:
+    """Write one JSON record per combination into ``out_dir``; return counts by
+    outcome. ``workers`` > 1 spreads the task x mode groups over processes."""
+    from murineshiftwork.cli.tasks import list_available_tasks
+
+    config_dir = Path(config_dir)
+    out_dir = Path(out_dir)
+    if out_dir.exists() and any(out_dir.iterdir()):
+        raise SystemExit(f"{out_dir} is not empty: snapshot into a fresh directory")
+    task_dirs = {k: Path(v) for k, v in list_available_tasks(detailed=True).items()}
+    tasks = sorted(set(tree_tasks(config_dir)) | set(extra_tasks))
+    setups, subjects = _names(config_dir, "setups"), _names(config_dir, "subjects")
+    groups = [
+        (config_dir, out_dir, task_dirs, task, mode, setups, subjects)
+        for task in tasks
+        for mode in task_modes(config_dir, task, task_dirs.get(task))
+    ]
+    counts: Counter = Counter()
+    if workers > 1:
+        with ProcessPoolExecutor(workers) as pool:
+            for c in pool.map(_snapshot_group, *zip(*groups, strict=True)):
+                counts += c
+    else:
+        for group in groups:
+            counts += _snapshot_group(*group)
     return counts
 
 
@@ -290,8 +332,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--task", action="append", default=[], help="also snapshot this task"
     )
+    p.add_argument("--workers", type=int, default=1, help="worker processes")
     a = p.parse_args(argv)
-    counts = snapshot(a.config_dir, a.out_dir, a.task)
+    counts = snapshot(a.config_dir, a.out_dir, a.task, a.workers)
     for outcome, n in sorted(counts.items()):
         print(f"{outcome}\t{n}")
     return 0
