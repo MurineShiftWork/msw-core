@@ -10,6 +10,49 @@ from datetime import datetime
 from pathlib import Path
 
 
+def _check_setup_locks(dirty_files):
+    """Refuse when a file to change belongs to a session whose setup is in use.
+
+    A session's setup is ``process.setup`` of the ``.msw.session.yaml`` next to its
+    ``.msw.csv``; a file with no readable session YAML has no known setup and is not
+    checked. The lock check is ``logic.session_lock.owner_state``: a live owner, or
+    one on another host (liveness unknown), blocks; a dead owner's lock does not.
+    """
+    import yaml
+
+    from murineshiftwork.logic.session_lock import (
+        FOREIGN,
+        LIVE,
+        lock_path,
+        owner_state,
+        read_lock,
+    )
+
+    held = {}
+    for f in dirty_files:
+        session_yaml = f.with_name(f.name.removesuffix(".csv") + ".session.yaml")
+        try:
+            setup = (yaml.safe_load(session_yaml.read_text()) or {})["process"]["setup"]
+        except (OSError, yaml.YAMLError, KeyError, TypeError):
+            continue
+        if not setup or setup in held:
+            continue
+        path = lock_path(str(setup))
+        if owner_state(read_lock(path)) in (LIVE, FOREIGN):
+            held[setup] = (f, path)
+    if held:
+        lines = [
+            f"setup {setup!r} is held by a running session (lock {path}); "
+            f"not cleaning {f}"
+            for setup, (f, path) in held.items()
+        ]
+        raise SystemExit(
+            "msw post clean refused:\n  "
+            + "\n  ".join(lines)
+            + "\nEnd the session first; if its owner is gone, remove the lock file."
+        )
+
+
 def run_post_clean(**args_dict):
     """Remove noise-event rows from .msw.csv files under data_dir.
 
@@ -23,6 +66,10 @@ def run_post_clean(**args_dict):
         raise FileNotFoundError(f"data-dir not found: {data_dir}")
 
     csv_files = sorted(data_dir.rglob("*.msw.csv"))
+    dirty_files = [
+        f for f in csv_files if event in f.read_text(encoding="utf-8", errors="replace")
+    ]
+    _check_setup_locks(dirty_files)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     n_scanned = 0
     n_modified = 0
