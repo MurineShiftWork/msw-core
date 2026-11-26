@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import importlib
 import logging
+import multiprocessing
 import os
 import socket
+from functools import partial
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Protocol, runtime_checkable
 
@@ -299,3 +302,64 @@ def test_run_task_recovers_a_dead_session(monkeypatch, tmp_path):
     assert backend.calls == ["configure", "reset", "close"]
     assert _statuses(container)["behaviour"] == "interrupted"
     assert not lock_path("rig").exists()
+
+
+# --- concurrent acquirers ---
+
+_RACERS = 6
+
+
+def _mark_recovery(marks: str, old: dict) -> None:
+    (Path(marks) / str(os.getpid())).touch()
+
+
+def _race_acquire(lock_dir, marks, barrier, results, done):
+    """One racer (a separate process, so pids differ): take the lock at the barrier,
+    report the outcome, hold the lock until every racer has reported."""
+    lock = SetupLock(
+        "rig", lock_dir=Path(lock_dir), on_stale=partial(_mark_recovery, marks)
+    )
+    barrier.wait()
+    try:
+        lock.acquire()
+        results.put("owner")
+    except SessionLockError:
+        results.put("refused")
+    except Exception as exc:  # noqa: BLE001 - reported to the parent
+        results.put(f"error: {exc!r}")
+    done.wait(60)
+    lock.release()
+
+
+@pytest.mark.parametrize("stale", [False, True], ids=["free", "dead_owner"])
+def test_concurrent_acquirers_yield_one_owner(tmp_path, stale):
+    lock_dir, marks = tmp_path / "locks", tmp_path / "marks"
+    lock_dir.mkdir()
+    marks.mkdir()
+    if stale:
+        lock_path("rig", lock_dir).write_text(
+            yaml.safe_dump({"pid": 999999, "host": socket.gethostname()})
+        )
+    ctx = multiprocessing.get_context("spawn")
+    barrier, results, done = ctx.Barrier(_RACERS), ctx.Queue(), ctx.Event()
+    procs = [
+        ctx.Process(
+            target=_race_acquire,
+            args=(str(lock_dir), str(marks), barrier, results, done),
+        )
+        for _ in range(_RACERS)
+    ]
+    for p in procs:
+        p.start()
+    try:
+        outcomes = sorted(results.get(timeout=120) for _ in procs)
+        owner_pid = read_lock(lock_path("rig", lock_dir))["pid"]
+    finally:
+        done.set()
+        for p in procs:
+            p.join(30)
+    assert outcomes == ["owner"] + ["refused"] * (_RACERS - 1)
+    assert owner_pid in {p.pid for p in procs}
+    # the dead owner's recovery runs once, in the process that took the lock
+    assert [m.name for m in marks.iterdir()] == ([str(owner_pid)] if stale else [])
+    assert sorted(p.name for p in lock_dir.iterdir()) == []

@@ -17,9 +17,9 @@ At acquire:
 - held by a live pid on this host: refuse (``SessionLockError``).
 - held by a pid on another host (a shared home): refuse; its liveness cannot be
   checked from here, the message names the file to remove.
-- held by a dead pid, or unreadable: the previous session died without cleanup. Warn,
-  run the stale handler (reset cameras left recording, mark its ``running``
-  acquisitions ``interrupted``), then take the lock.
+- held by a dead pid, or unreadable: the previous session died without cleanup. Take
+  the lock, warn and run the stale handler (reset cameras left recording, mark its
+  ``running`` acquisitions ``interrupted``).
 
 A ``--simulate`` run takes the lock too (``leave_stale``), so it refuses while a
 session is live, but it leaves a dead owner's lock in place and runs without one:
@@ -30,6 +30,22 @@ resetting the cameras (``clear_stale_lock``). A live owner's lock is never remov
 The lock is released by the owning process on normal exit and on exceptions
 (``finally`` plus ``atexit``). A pid reused by an unrelated process after a crash
 reads as live and refuses; remove the file by hand then.
+
+Concurrent acquirers (two runs started together) get exactly one owner:
+
+- a lock is published only by hard-linking a fully written private file to the lock
+  name; the link fails when the name exists, so creation is exclusive and a reader
+  never sees a half written lock. Where hard links are not supported, an exclusive
+  create (``O_CREAT | O_EXCL``) takes its place.
+- a dead owner's lock is taken over by renaming it to a private name and checking
+  that the renamed file still holds the dead owner's fields. Only one acquirer's
+  rename succeeds; one that moved a lock taken in the meantime links it back. The
+  dead owner's fields are left as ``<setup>.lock.recover`` and the winner publishes
+  its own lock as above, so a run that sees the name free in between competes
+  through the same exclusive create.
+- the stale recovery (``on_stale``) runs after the lock is taken, by whichever run
+  owns it, on the ``.recover`` fields it takes by rename: once, and no other run
+  starts on the setup meanwhile. A ``leave_stale`` owner leaves them in place.
 """
 
 from __future__ import annotations
@@ -40,6 +56,8 @@ import logging
 import os
 import socket
 import sys
+import time
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -53,6 +71,9 @@ LOCK_DIR = Path("~/.murineshiftwork/locks").expanduser()
 
 #: the lock this process holds, so TaskProcess can record the session container
 _held: SetupLock | None = None
+
+#: attempts to take the lock while other acquirers move it (each backs off briefly)
+_ATTEMPTS = 100
 
 
 #: ``owner_state``: no lock file
@@ -143,7 +164,7 @@ class SetupLock:
 
     Args:
         setup: Setup name (the lock file name).
-        on_stale: Called with the dead owner's lock fields before the lock is taken.
+        on_stale: Called with the dead owner's lock fields once the lock is taken.
             Its exceptions are logged, never raised: recovery must not block the run.
         lock_dir: Lock directory (tests).
         leave_stale: A dead owner's lock is left in place and not taken; the
@@ -175,9 +196,6 @@ class SetupLock:
     def acquire(self) -> None:
         global _held
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        old = read_lock(self.path)
-        if old is not None and not self._check_owner(old):
-            return
         self._data = {
             "pid": os.getpid(),
             "host": socket.gethostname(),
@@ -185,20 +203,38 @@ class SetupLock:
             "setup": self.setup,
             "session_container": "",
         }
-        self._write()
+        for attempt in range(_ATTEMPTS):
+            if _publish(self.path, self._data):
+                break
+            old = read_lock(self.path)
+            if old is None:
+                continue  # released or moved since the publish attempt
+            if not self._check_owner(old):
+                return
+            claimed = _claim(self.path, old)
+            if claimed is not None:
+                # handed to whichever run publishes next, which may not be this one
+                claimed.replace(_pending_path(self.path))
+            else:
+                time.sleep(0.001 * (attempt + 1))
+        else:
+            raise SessionLockError(
+                f"setup {self.setup!r}: could not take {self.path} while other "
+                "runs were taking it; try again"
+            )
         self._held = True
         _held = self
         atexit.register(self.release)
+        if not self._leave_stale:
+            pending = _take_pending(self.path)
+            if pending is not None:
+                self._recover(pending)
 
     def _check_owner(self, old: dict[str, Any]) -> bool:
-        """Refuse a live or foreign owner, recover a dead one. Returns whether to
-        take the lock."""
+        """Refuse a live or foreign owner. Returns whether to take over a dead one
+        (False for ``leave_stale``)."""
         pid = _owner_pid(old)
-        owner = (
-            f"pid {pid} on {old.get('host') or '?'} since "
-            f"{old.get('started_at', '?')}, "
-            f"session {old.get('session_container') or '(no folder yet)'}"
-        )
+        owner = _describe(old)
         state = owner_state(old)
         if state == FOREIGN:
             raise SessionLockError(
@@ -219,20 +255,23 @@ class SetupLock:
                 owner,
             )
             return False
+        return True
+
+    def _recover(self, old: dict[str, Any]) -> None:
+        """Recover the dead owner's session; runs once, by the new owner."""
         log.warning(
             "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"
             "Setup %r: the previous session did not end cleanly (%s).\n"
             "Resetting its cameras and marking its running acquisitions interrupted.\n"
             "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
             self.setup,
-            owner,
+            _describe(old),
         )
         if self._on_stale is not None:
             try:
                 self._on_stale(old)
             except Exception:  # noqa: BLE001 - recovery never blocks the new run
                 log.warning("stale session recovery failed", exc_info=True)
-        return True
 
     def set_container(self, container: str | Path) -> None:
         if not self._held:
@@ -257,9 +296,92 @@ class SetupLock:
                 self.path.unlink()
 
     def _write(self) -> None:
-        tmp = self.path.with_suffix(".lock.tmp")
+        tmp = _private_name(self.path, "tmp")
         tmp.write_text(yaml.safe_dump(self._data, sort_keys=False))
         tmp.replace(self.path)
+
+
+def _describe(old: dict[str, Any]) -> str:
+    return (
+        f"pid {_owner_pid(old)} on {old.get('host') or '?'} since "
+        f"{old.get('started_at', '?')}, "
+        f"session {old.get('session_container') or '(no folder yet)'}"
+    )
+
+
+def _private_name(path: Path, kind: str) -> Path:
+    """A name next to ``path`` that no other process uses."""
+    return path.with_name(f"{path.name}.{kind}-{os.getpid()}-{uuid.uuid4().hex}")
+
+
+def _publish(path: Path, data: dict[str, Any]) -> bool:
+    """Create the lock file ``path`` holding ``data`` unless it exists. Returns
+    whether this call created it.
+
+    The fields are written to a private file first and hard-linked to ``path``:
+    the link is atomic and fails when ``path`` exists, so readers never see a
+    partly written lock. Without hard link support (some file systems), an
+    exclusive create and a write take its place.
+    """
+    text = yaml.safe_dump(data, sort_keys=False)
+    tmp = _private_name(path, "tmp")
+    tmp.write_text(text)
+    try:
+        os.link(tmp, path)
+        return True
+    except FileExistsError:
+        return False
+    except OSError:
+        pass  # no hard links here
+    finally:
+        tmp.unlink(missing_ok=True)
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except (FileExistsError, PermissionError):
+        return False  # PermissionError: Windows, the name is being removed
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    return True
+
+
+def _claim(path: Path, old: dict[str, Any]) -> Path | None:
+    """Move the lock ``path`` to a private name if it still holds ``old``. Returns
+    the private file, or None when this call did not move it.
+
+    Only one process can rename the file away. If the renamed file is not ``old``
+    (another run took the lock in the meantime), it is linked back unless the name
+    was taken again.
+    """
+    claimed = _private_name(path, "stale")
+    try:
+        path.rename(claimed)
+    except (FileNotFoundError, PermissionError):
+        return None  # moved by another acquirer, or open on Windows: retry
+    if read_lock(claimed) == old:
+        return claimed
+    with contextlib.suppress(OSError):
+        os.link(claimed, path)
+    claimed.unlink(missing_ok=True)
+    return None
+
+
+def _pending_path(path: Path) -> Path:
+    """A dead owner's lock moved aside, waiting for the next owner to recover it."""
+    return path.with_name(f"{path.name}.recover")
+
+
+def _take_pending(path: Path) -> dict[str, Any] | None:
+    """The fields of a dead owner's lock waiting for recovery, taken by this
+    process only (renamed to a private name), or None."""
+    taken = _private_name(path, "recovering")
+    try:
+        _pending_path(path).rename(taken)
+    except (FileNotFoundError, PermissionError):
+        return None
+    try:
+        return read_lock(taken) or {}
+    finally:
+        taken.unlink(missing_ok=True)
 
 
 def clear_stale_lock(setup: str, lock_dir: Path | None = None) -> dict[str, Any] | None:
@@ -275,9 +397,12 @@ def clear_stale_lock(setup: str, lock_dir: Path | None = None) -> dict[str, Any]
     old = read_lock(path)
     if old is None or owner_state(old) != STALE:
         return None
+    claimed = _claim(path, old)
+    if claimed is None:
+        return None  # taken or removed by another process meanwhile
+    claimed.unlink(missing_ok=True)
     if old.get("session_container"):
         interrupt_running_acquisitions(old["session_container"])
-    path.unlink(missing_ok=True)
     log.warning("setup %r: removed the lock of a dead session (%s)", setup, path)
     return old
 
