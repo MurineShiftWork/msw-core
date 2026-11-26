@@ -394,11 +394,13 @@ def _pending_path(path: Path) -> Path:
 
 def _take_pending(path: Path) -> dict[str, Any] | None:
     """The fields of a dead owner's lock waiting for recovery, removed, or None.
-    The caller holds the guard."""
+    The caller holds the guard and has written its lock: a failed delete is
+    left for the next owner, which recovers the same session again."""
     pending = _pending_path(path)
     old = read_lock(pending)
     if old is not None:
-        _retry_sharing(pending.unlink, True)
+        with contextlib.suppress(OSError):
+            _retry_sharing(pending.unlink, True)
     return old
 
 
