@@ -444,15 +444,27 @@ class CameraSession:
             if first is not None:
                 raise first
 
+    def _camera_outcomes(self) -> tuple[list[str], list[str]]:
+        """``(recorded, lost)`` as ``group/camera``: the one split of the session's
+        cameras the exit code comes from. A camera recorded when its group started,
+        did not raise and the camera did not fail (preflight, start or stop); every
+        other camera of the session is lost, a group that never started included."""
+        recorded: list[str] = []
+        lost: list[str] = []
+        for run in self._runs:
+            ok_group = run.started and not run.raised
+            for name in run.camera_names:
+                full = f"{run.label}/{name}"
+                (recorded if ok_group and name not in run.failed else lost).append(full)
+        return recorded, lost
+
     def recorded_cameras(self) -> list[str]:
         """``group/camera`` of every camera that started and did not fail."""
-        return [
-            f"{run.label}/{name}"
-            for run in self._runs
-            if run.started and not run.raised
-            for name in run.camera_names
-            if name not in run.failed
-        ]
+        return self._camera_outcomes()[0]
+
+    def lost_cameras(self) -> list[str]:
+        """``group/camera`` of every requested camera that did not record."""
+        return self._camera_outcomes()[1]
 
     def record(self) -> CamerasRecord:
         """The camera record as it stands."""
@@ -679,6 +691,12 @@ def reset_run_sessions() -> None:
 def run_recorded_cameras() -> list[str]:
     """``group/camera`` of every camera recorded by this run's camera sessions."""
     return [name for s in _RUN_SESSIONS for name in s.recorded_cameras()]
+
+
+def run_lost_cameras() -> list[str]:
+    """``group/camera`` of every camera of this run's camera sessions that did not
+    record (failed at preflight, at start or during the session)."""
+    return [name for s in _RUN_SESSIONS for name in s.lost_cameras()]
 
 
 def run_requested_video() -> bool:

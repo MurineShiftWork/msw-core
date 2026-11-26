@@ -65,7 +65,7 @@ def _dispatch(args_dict: dict) -> int:
     # calling sys.exit); the operator already saw the boxed message, so run_cli translates it to
     # exit 1 at the CLI boundary. A GUI/RPC caller catches the exception instead.
     result = args_dict["func"](**args_dict)
-    # `msw run` returns its exit code (3: completed degraded, see cli/execute.py)
+    # `msw run` returns its exit code (3: completed degraded, 4: partial camera loss, see cli/execute.py)
     if args_dict.get("command") == "run" and isinstance(result, int):
         return result
     return 0

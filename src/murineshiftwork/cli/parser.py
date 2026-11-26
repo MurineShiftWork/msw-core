@@ -400,6 +400,10 @@ def make_subparser_run(sub_parsers):
     msw run -t task_name -s subject_name -b /dev/ttyACM0 --setup setup-1
     msw run -t task_name -s subject_name --simulate   (no hardware required)
 
+Exit codes: 0 completed, 1 failed, 3 completed degraded (video asked for under
+camera_failure=continue, no camera recorded), 4 completed with partial camera loss
+(same, but some cameras recorded and some did not; the log warning names them).
+
 Available tasks:
 {available_tasks}
 """
