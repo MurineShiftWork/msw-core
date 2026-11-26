@@ -313,32 +313,52 @@ def _mark_recovery(marks: str, old: dict) -> None:
     (Path(marks) / str(os.getpid())).touch()
 
 
+def _racer_lock(lock_dir: str, marks: str) -> SetupLock:
+    return SetupLock(
+        "rig", lock_dir=Path(lock_dir), on_stale=partial(_mark_recovery, marks)
+    )
+
+
+def _try_acquire(lock: SetupLock) -> str:
+    try:
+        lock.acquire()
+    except SessionLockError:
+        return "refused"
+    except Exception as exc:  # noqa: BLE001 - reported to the parent
+        return f"error: {exc!r}"
+    return "owner"
+
+
 def _race_acquire(lock_dir, marks, barrier, results, done):
     """One racer (a separate process, so pids differ): take the lock at the barrier,
     report the outcome, hold the lock until every racer has reported."""
-    lock = SetupLock(
-        "rig", lock_dir=Path(lock_dir), on_stale=partial(_mark_recovery, marks)
-    )
+    lock = _racer_lock(lock_dir, marks)
     barrier.wait()
-    try:
-        lock.acquire()
-        results.put("owner")
-    except SessionLockError:
-        results.put("refused")
-    except Exception as exc:  # noqa: BLE001 - reported to the parent
-        results.put(f"error: {exc!r}")
+    results.put(_try_acquire(lock))
     done.wait(60)
     lock.release()
 
 
-@pytest.mark.parametrize("stale", [False, True], ids=["free", "dead_owner"])
-def test_concurrent_acquirers_yield_one_owner(tmp_path, stale):
+def _stale_lock(lock_dir: Path) -> Path:
+    path = lock_path("rig", lock_dir)
+    path.write_text(yaml.safe_dump({"pid": 999999, "host": socket.gethostname()}))
+    return path
+
+
+def _lock_files(lock_dir: Path) -> list[str]:
+    return sorted(p.name for p in lock_dir.iterdir())
+
+
+@pytest.mark.parametrize("owner", ["free", "dead", "live"])
+def test_concurrent_acquirers_yield_one_owner(tmp_path, owner):
     lock_dir, marks = tmp_path / "locks", tmp_path / "marks"
     lock_dir.mkdir()
     marks.mkdir()
-    if stale:
+    if owner == "dead":
+        _stale_lock(lock_dir)
+    elif owner == "live":  # this test process: alive, and no racer's pid
         lock_path("rig", lock_dir).write_text(
-            yaml.safe_dump({"pid": 999999, "host": socket.gethostname()})
+            yaml.safe_dump({"pid": os.getpid(), "host": socket.gethostname()})
         )
     ctx = multiprocessing.get_context("spawn")
     barrier, results, done = ctx.Barrier(_RACERS), ctx.Queue(), ctx.Event()
@@ -358,8 +378,104 @@ def test_concurrent_acquirers_yield_one_owner(tmp_path, stale):
         done.set()
         for p in procs:
             p.join(30)
+    if owner == "live":
+        assert outcomes == ["refused"] * _RACERS
+        assert owner_pid == os.getpid()
+        assert [m.name for m in marks.iterdir()] == []
+        assert _lock_files(lock_dir) == ["rig.lock", "rig.lock.guard"]
+        return
     assert outcomes == ["owner"] + ["refused"] * (_RACERS - 1)
     assert owner_pid in {p.pid for p in procs}
     # the dead owner's recovery runs once, in the process that took the lock
-    assert [m.name for m in marks.iterdir()] == ([str(owner_pid)] if stale else [])
-    assert sorted(p.name for p in lock_dir.iterdir()) == []
+    expected_marks = [str(owner_pid)] if owner == "dead" else []
+    assert [m.name for m in marks.iterdir()] == expected_marks
+    assert _lock_files(lock_dir) == ["rig.lock.guard"]
+
+
+def _pause_after(name, paused, resume):
+    """Make ``session_lock.<name>`` signal ``paused`` and wait for ``resume`` after
+    its first call returns."""
+    original = getattr(session_lock, name)
+
+    def _wrapper(*args, **kwargs):
+        out = original(*args, **kwargs)
+        if not paused.is_set():
+            paused.set()
+            resume.wait(60)
+        return out
+
+    setattr(session_lock, name, _wrapper)
+
+
+def _signal_blocked(blocked):
+    """Make a failed attempt at the guard set ``blocked``."""
+    original = session_lock._try_lock
+
+    def _wrapper(fd):
+        taken = original(fd)
+        if not taken:
+            blocked.set()
+        return taken
+
+    session_lock._try_lock = _wrapper
+
+
+def _paused_acquire(lock_dir, marks, pause_at, paused, resume, results, done):
+    _pause_after(pause_at, paused, resume)
+    lock = _racer_lock(lock_dir, marks)
+    results.put(("first", _try_acquire(lock)))
+    done.wait(60)
+    lock.release()
+
+
+def _blocked_acquire(lock_dir, marks, blocked, results, done):
+    _signal_blocked(blocked)
+    lock = _racer_lock(lock_dir, marks)
+    results.put(("second", _try_acquire(lock)))
+    done.wait(60)
+    lock.release()
+
+
+@pytest.mark.parametrize(
+    "pause_at",
+    ["read_lock", "_retry_sharing"],
+    ids=["saw_dead_owner", "moved_dead_owner_aside"],
+)
+def test_takeover_of_a_dead_owner_is_not_interleaved(tmp_path, pause_at):
+    """The first run stops right after it read the dead owner's lock, or right
+    after it moved that lock aside (the lock name is free then). A second run
+    started meanwhile waits for it and then finds a live owner."""
+    lock_dir, marks = tmp_path / "locks", tmp_path / "marks"
+    lock_dir.mkdir()
+    marks.mkdir()
+    _stale_lock(lock_dir)
+    ctx = multiprocessing.get_context("spawn")
+    paused, resume, blocked = ctx.Event(), ctx.Event(), ctx.Event()
+    results, done = ctx.Queue(), ctx.Event()
+    first = ctx.Process(
+        target=_paused_acquire,
+        args=(str(lock_dir), str(marks), pause_at, paused, resume, results, done),
+    )
+    second = ctx.Process(
+        target=_blocked_acquire,
+        args=(str(lock_dir), str(marks), blocked, results, done),
+    )
+    procs = [first]
+    try:
+        first.start()
+        assert paused.wait(60)
+        procs.append(second)
+        second.start()
+        assert blocked.wait(60)  # the second run is waiting at the guard
+        resume.set()
+        outcomes = dict(results.get(timeout=60) for _ in procs)
+        owner_pid = read_lock(lock_path("rig", lock_dir))["pid"]
+    finally:
+        resume.set()
+        done.set()
+        for p in procs:
+            p.join(30)
+    assert outcomes == {"first": "owner", "second": "refused"}
+    assert owner_pid == first.pid
+    assert [m.name for m in marks.iterdir()] == [str(first.pid)]
+    assert _lock_files(lock_dir) == ["rig.lock.guard"]
