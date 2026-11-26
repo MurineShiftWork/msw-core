@@ -153,7 +153,7 @@ def read_ui_url() -> str:
 
 
 def read_log_config() -> dict:
-    """Return LogAgent config from machine config.
+    """Return the trial relay config (server URL and bearer token) from machine config.
 
     Reads new-style prefixed keys first, falls back to legacy names:
       logagent_api_url   (legacy: log_url)

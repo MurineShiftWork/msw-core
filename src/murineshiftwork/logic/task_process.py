@@ -273,7 +273,7 @@ class TaskRunner(Thread):
             (``input_kwargs['trial_writer']``), so the framework owns the destination path and the
             on-disk format;
           - if ``relay`` is given (the task's flat monitor event - a different, smaller shape than
-            the stored ``trial``), it is dispatched to the LogAgent relay queue best-effort (a down
+            the stored ``trial``), it is dispatched to the trial relay queue best-effort (a down
             monitor never interrupts the task; dropped events are counted in ``relay_drops`` and
             logged on the first and every ``RELAY_DROP_LOG_EVERY``-th drop).
 
@@ -341,7 +341,7 @@ class TaskProcess:
     _pre_hooks: list
     _post_hooks: list
     _hook_ctx: Any = None
-    # LogAgent relay
+    # Trial relay (logic.trial_relay)
     _relay_queue: Any = None
     _relay_proc: Any = None
     # Framework-owned trial-data writer (inert unless a task emits)
@@ -607,11 +607,7 @@ class TaskProcess:
         import multiprocessing
         from datetime import datetime
 
-        try:
-            from murineshiftwork.logagent.logagent import LogAgent
-        except ImportError:
-            logging.debug("msw-agent not installed: relay disabled")
-            return
+        from murineshiftwork.logic.trial_relay import TrialRelay
 
         bearer_token = log_cfg["log_bearer_token"]
         self._relay_queue = multiprocessing.Queue(maxsize=500)
@@ -624,7 +620,7 @@ class TaskProcess:
             "started_at": datetime.now(UTC).isoformat(timespec="seconds"),
             "session_paths": {k: str(v) for k, v in (self.session_paths or {}).items()},
         }
-        self._relay_proc = LogAgent(
+        self._relay_proc = TrialRelay(
             self._relay_queue,
             log_url,
             setup=setup,
@@ -634,7 +630,7 @@ class TaskProcess:
         )
         self._relay_proc.start()
         self.input_kwargs["relay_queue"] = self._relay_queue
-        logging.debug("LogAgent started -> %s (setup=%r)", log_url, setup)
+        logging.debug("Trial relay started -> %s (setup=%r)", log_url, setup)
 
     def exit_safely(self):
         self.exiting = True
