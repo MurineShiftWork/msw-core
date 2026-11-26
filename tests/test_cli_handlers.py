@@ -6,7 +6,6 @@ temporary tree with the hardware and the machine-local config replaced.
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -20,7 +19,7 @@ from murineshiftwork.cli.execute import (
     run_init,
     run_setup,
 )
-from murineshiftwork.cli.post import run_post_clean, run_post_run
+from murineshiftwork.cli.post import run_post_clean
 from murineshiftwork.cli.tasks import run_tasks_defaults, run_tasks_init_configs
 
 
@@ -275,70 +274,19 @@ def test_post_clean_ignores_other_files(tmp_path):
     assert other.read_text() == "t,Port4\n"
 
 
-# post run
+# post run was removed
 
 
-@pytest.fixture
-def pipeline_script(monkeypatch):
-    """Make the handler find a script; capture the subprocess call instead of running it."""
-    real_exists = Path.exists
-    monkeypatch.setattr(
-        Path,
-        "exists",
-        lambda self: (
-            True if self.name == "run_post_acquisition_tasks.sh" else real_exists(self)
-        ),
-    )
-    calls: list[list[str]] = []
-    result = subprocess.CompletedProcess([], 0)
+def test_post_run_subcommand_is_gone():
+    import argparse
 
-    def fake_run(cmd, *a, **kw):
-        calls.append(cmd)
-        return result
+    from murineshiftwork.cli.parser import make_subparser_post
 
-    monkeypatch.setattr(post.subprocess, "run", fake_run)
-    return calls, result
-
-
-def test_post_run_builds_command_from_args(pipeline_script):
-    calls, _ = pipeline_script
-    run_post_run(
-        central_data="/c",
-        skip_upload=True,
-        skip_h264=True,
-        dry_run=True,
-        rpi_group="g",
-    )
-    (cmd,) = calls
-    assert cmd[0] == "bash" and cmd[1].endswith("run_post_acquisition_tasks.sh")
-    assert set(cmd[2:]) == {
-        "--central-data=/c",
-        "--rpi-group=g",
-        "--skip-upload",
-        "--skip-h264",
-        "--dry-run",
-    }
-
-
-def test_post_run_nonzero_exit_becomes_system_exit(pipeline_script):
-    _, result = pipeline_script
-    result.returncode = 7
-    with pytest.raises(SystemExit) as info:
-        run_post_run()
-    assert info.value.code == 7
-
-
-def test_post_run_missing_script_raises(monkeypatch):
-    real_exists = Path.exists
-    monkeypatch.setattr(
-        Path,
-        "exists",
-        lambda self: (
-            False if self.name == "run_post_acquisition_tasks.sh" else real_exists(self)
-        ),
-    )
-    with pytest.raises(FileNotFoundError, match="Pipeline script not found"):
-        run_post_run()
+    root = argparse.ArgumentParser()
+    make_subparser_post(root.add_subparsers())
+    with pytest.raises(SystemExit):
+        root.parse_args(["post", "run"])
+    assert not hasattr(post, "run_post_run")
 
 
 # tasks defaults / init-configs
