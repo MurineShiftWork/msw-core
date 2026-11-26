@@ -54,14 +54,8 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
-      # The FLIR camera backend and the one-axis stage are optional packages the dev extra does
-      # not install: their halves of the camera backend contract and simulate guard tests skip.
-      # Any other import skip fails the job.
       - name: Run tests
-        run: >-
-          uv run pytest --fail-on-import-skips
-          --allow-import-skip=msw_flir_bonsai
-          --allow-import-skip=one_axis_stage
+        run: uv run pytest --fail-on-import-skips
 
   ci:
     name: CI

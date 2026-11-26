@@ -53,6 +53,10 @@ dev = [
     "types-PyYAML",
     # the rce camera backend, for the contract tests against a real backend
     "rpi-camera-ensemble[msw]==0.18.1",
+    # the FLIR camera backend and the one-axis stage, so their halves of the contract and
+    # simulate guard tests run instead of skipping
+    "msw-flir-bonsai>=0.8.0",
+    "one-axis-stage>=0.3.0",
 ]
 docs = [
     "mkdocs-material",
