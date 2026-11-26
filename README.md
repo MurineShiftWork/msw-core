@@ -53,7 +53,11 @@ overwrite the section.
 Exit codes: `0` completed, `1` failed (including a Bpod that does not connect and a
 setup in use), `3` completed degraded: the task asked for video (`record_video` on,
 or a camera session of the task holding a `with_video` group), `camera_failure:
-continue` let the run go on, and no camera recorded.
+continue` let the run go on, and no camera recorded; `4` completed with partial
+camera loss: same conditions, but at least one camera recorded and at least one
+requested camera did not (lost at preflight, at start or during the session, e.g. 0
+frames). The log warning names the lost `group/camera` units. `--simulate` and runs
+without video exit `0`.
 
 ## Checking the cameras of a setup
 

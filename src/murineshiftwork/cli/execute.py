@@ -10,6 +10,7 @@ import yaml
 
 from murineshiftwork.hardware.camera.session import (
     reset_run_sessions,
+    run_lost_cameras,
     run_recorded_cameras,
     run_requested_video,
 )
@@ -29,6 +30,10 @@ from murineshiftwork.logic.session_lock import (
 #: ``msw run`` exit code: the task completed, but recorded no camera although it
 #: asked for video (``camera_failure: continue`` let it go on)
 EXIT_DEGRADED = 3
+
+#: ``msw run`` exit code: the task completed with video, but some requested camera
+#: did not record while at least one did (``camera_failure: continue``)
+EXIT_PARTIAL_CAMERAS = 4
 
 # Device factory: (typed device config, resolved serial port) -> a DeviceProtocol wrapper. Keyed
 # by the device *type* (SetupConfig device.type). Adding a device = a wrapper + one entry here.
@@ -225,7 +230,7 @@ def run_task(**args_dict):
     msw run -s subject -t task
     msw run -s subject -t task -p serial_port
 
-    Returns the run's exit code: 0, or ``EXIT_DEGRADED``.
+    Returns the run's exit code: 0, ``EXIT_DEGRADED`` or ``EXIT_PARTIAL_CAMERAS``.
     """
     from murineshiftwork.logic.log import suppress_third_party_console_handlers
 
@@ -272,7 +277,8 @@ def _setup_lock(ctx: RunContext, camera_groups: list | None):
 
 def _run_exit_code(ctx: RunContext, args_dict: dict) -> int:
     """``EXIT_DEGRADED`` when the run should have recorded video, the camera failure
-    policy let it go on, and no camera recorded; else 0.
+    policy let it go on, and no camera recorded; ``EXIT_PARTIAL_CAMERAS`` when some
+    camera recorded and another requested one did not; else 0.
 
     The run asked for video when the task setting ``record_video`` is on or a camera
     session of the task holds a ``with_video`` group: a task that records video by
@@ -285,7 +291,16 @@ def _run_exit_code(ctx: RunContext, args_dict: dict) -> int:
     if ctx.camera_failure != "continue" or not args_dict.get("camera_groups"):
         return 0
     if run_recorded_cameras():
-        return 0
+        lost = run_lost_cameras()
+        if not lost:
+            return 0
+        logging.warning(
+            "Completed with partial camera loss (camera_failure=continue); "
+            "cameras that did not record: %s; exit code %d",
+            ", ".join(lost),
+            EXIT_PARTIAL_CAMERAS,
+        )
+        return EXIT_PARTIAL_CAMERAS
     logging.warning(
         "Completed degraded: the task asked for video but no camera recorded "
         "(camera_failure=continue); exit code %d",
