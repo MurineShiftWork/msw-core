@@ -6,6 +6,8 @@ temporary tree with the hardware and the machine-local config replaced.
 
 from __future__ import annotations
 
+import os
+import socket
 from pathlib import Path
 
 import pytest
@@ -21,6 +23,7 @@ from murineshiftwork.cli.execute import (
 )
 from murineshiftwork.cli.post import run_post_clean
 from murineshiftwork.cli.tasks import run_tasks_defaults, run_tasks_init_configs
+from murineshiftwork.logic.session_lock import lock_path
 
 
 @pytest.fixture
@@ -275,6 +278,62 @@ def test_post_clean_ignores_other_files(tmp_path):
 
 
 # post run was removed
+
+
+# post clean and the setup lock
+
+
+def _session_csv(tmp_path, setup="rig"):
+    csv = _csv(tmp_path / "s" / "a.msw.csv", ["t,Port1", "t,Port4"])
+    (tmp_path / "s" / "a.msw.session.yaml").write_text(
+        yaml.safe_dump({"process": {"setup": setup}})
+    )
+    return csv
+
+
+def _lock(setup, pid, host=None):
+    path = lock_path(setup)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump({"pid": pid, "host": host or socket.gethostname()}))
+
+
+def test_post_clean_refuses_a_live_lock(tmp_path):
+    f = _session_csv(tmp_path)
+    _lock("rig", os.getppid())  # a live process on this host that is not this one
+    with pytest.raises(SystemExit, match="'rig'.*held by a running session"):
+        run_post_clean(data_dir=str(tmp_path))
+    assert f.read_text() == "t,Port1\nt,Port4\n"
+    assert list(tmp_path.rglob("*.bak.*")) == []
+
+
+def test_post_clean_dry_run_reports_a_live_lock(tmp_path):
+    _session_csv(tmp_path)
+    _lock("rig", os.getppid())
+    with pytest.raises(SystemExit, match="refused"):
+        run_post_clean(data_dir=str(tmp_path), dry_run=True)
+
+
+def test_post_clean_ignores_a_stale_lock(tmp_path):
+    f = _session_csv(tmp_path)
+    _lock("rig", 999999)
+    run_post_clean(data_dir=str(tmp_path))
+    assert f.read_text() == "t,Port1\n"
+
+
+def test_post_clean_ignores_a_lock_of_another_setup(tmp_path):
+    f = _session_csv(tmp_path)
+    _lock("other", os.getppid())
+    run_post_clean(data_dir=str(tmp_path))
+    assert f.read_text() == "t,Port1\n"
+
+
+def test_post_clean_without_a_lock(tmp_path):
+    f = _session_csv(tmp_path)
+    run_post_clean(data_dir=str(tmp_path))
+    assert f.read_text() == "t,Port1\n"
+
+
+# post run
 
 
 def test_post_run_subcommand_is_gone():
