@@ -1,0 +1,13 @@
+---
+name: rig_b
+devices:
+  bpod:
+    type: bpod
+    port: COM3
+  pulsepal:
+    type: pulsepal
+    port_by_path: pci-0000:00:00.0-usb-0:0:2.0
+task_overrides:
+  demo_sequence:
+    iti: 2.0
+    record_video: false

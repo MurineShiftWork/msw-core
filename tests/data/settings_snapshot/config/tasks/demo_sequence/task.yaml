@@ -1,0 +1,11 @@
+---
+default:
+  block:
+    length: 20
+    reversal: true
+mode:
+  fast:
+    block:
+      length: 10
+  slow:
+    iti: 3.0

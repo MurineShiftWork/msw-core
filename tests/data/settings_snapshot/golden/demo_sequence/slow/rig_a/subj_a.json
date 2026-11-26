@@ -1,0 +1,92 @@
+{
+  "combination": {
+    "mode": "slow",
+    "setup": "rig_a",
+    "subject": "subj_a",
+    "task": "demo_sequence"
+  },
+  "provenance": {
+    "block.length": "subject:<config_dir>/subjects/subj_a.yaml",
+    "block.reversal": "overlay:<config_dir>/tasks/demo_sequence/task.yaml",
+    "calibration_file_liquid": "injected",
+    "calibration_file_sound": "injected",
+    "calibration_file_stage": "injected",
+    "config_dir": "injected",
+    "iti": "subject:<config_dir>/subjects/subj_a.yaml",
+    "serial_port_pulsepal": "injected",
+    "serial_port_scale": "injected",
+    "serial_port_stage": "injected",
+    "settings.stage": "injected"
+  },
+  "run": {
+    "acq_type": "msw",
+    "camera_failure": "continue",
+    "camera_groups": [
+      {
+        "backend": "rce",
+        "name": "top",
+        "record": "with_video",
+        "role": "",
+        "settings": {
+          "config": "<config_dir>/device_configs/cameras/rig_a.cameras.yaml",
+          "data_dir": "<out_path>"
+        },
+        "units": []
+      }
+    ],
+    "config_file_camera": "<config_dir>/device_configs/cameras/rig_a.cameras.yaml",
+    "scale_baudrate": 9600,
+    "scale_protocol": null,
+    "scale_type": "bench",
+    "serial_port_bpod": "/dev/ttyACM0",
+    "serial_port_pulsepal": "",
+    "serial_port_scale": "/dev/ttyUSB1",
+    "serial_port_stage": "/dev/serial/by-path/pci-0000:00:00.0-usb-0:0:1.0-port0",
+    "session_version": null
+  },
+  "settings": {
+    "block": {
+      "length": 40,
+      "reversal": true
+    },
+    "calibration_file_liquid": "",
+    "calibration_file_sound": "",
+    "calibration_file_stage": "<machine>/calibration.stage.default.yaml",
+    "config_dir": "<config_dir>",
+    "iti": 0.75,
+    "scale_type": "bench",
+    "serial_port_scale": "/dev/ttyUSB1",
+    "serial_port_stage": "/dev/serial/by-path/pci-0000:00:00.0-usb-0:0:1.0-port0",
+    "settings.stage": {
+      "axes": {
+        "x": {
+          "id": 11,
+          "operating_mode": "OP_POSITION",
+          "position_max": 660,
+          "position_min": 90,
+          "velocity_max": 0
+        }
+      },
+      "connection": {
+        "baudrate": 115200,
+        "timeout": 0.1
+      },
+      "known_positions": {
+        "back": {
+          "x": {
+            "position_raw": 600
+          }
+        }
+      }
+    },
+    "valve_s_for_ul": "<callable>"
+  },
+  "valve_s_for_ul": {
+    "1@1.0": 0.018213,
+    "1@2.0": 0.031325,
+    "1@5.0": 0.069777,
+    "2@1.0": 0.013293,
+    "2@2.0": 0.025584,
+    "2@5.0": 0.062459
+  }
+}
