@@ -570,7 +570,10 @@ class CameraSession:
             rec = run.units.setdefault(
                 r.name, CameraUnitRecord(name=r.name, hw_id=hw_ids.get(r.name, ""))
             )
-            rec.state = r.state
+            # a camera that failed in an earlier phase keeps that state: a later
+            # "stopped" (a backend reporting every unit) does not undo it
+            if not (r.ok and r.name in run.failed):
+                rec.state = r.state
             if r.files:
                 rec.files = list(dict.fromkeys(r.files))
             rec.extra.update(r.extra or {})
