@@ -399,6 +399,8 @@ def test_continue_warns_and_runs_on(session_paths, caplog):
     [group] = read_cameras_record(session_paths["session_folder"]).groups
     top, back = group.units
     assert (top.ok, back.ok, back.error) == (True, False, "no frames")
+    # the stop reported it stopped; it keeps the state of its start failure
+    assert (top.state, back.state) == ("stopped", "missing")
 
 
 def test_continue_stops_a_group_left_without_cameras(session_paths):
@@ -754,3 +756,15 @@ def test_a_start_exception_stays_failed_after_a_clean_stop(session_paths):
     cams.stop("completed")
     statuses = {p["group"]: p["status"] for p in peers(session_paths).values()}
     assert statuses["behaviour"] == "failed"
+
+
+def test_a_camera_failing_only_at_the_stop_ends_failed(session_paths):
+    FakeBackend.fail = {"stop": {"back": "0 frames"}}
+    cams = CameraSession([behaviour()], policy="continue")
+    cams.open()
+    cams.start(session_paths)
+    cams.stop()
+    [group] = read_cameras_record(session_paths["session_folder"]).groups
+    back = {u.name: u for u in group.units}["back"]
+    assert (back.ok, back.error) == (False, "0 frames")
+    assert back.state != "ready"
