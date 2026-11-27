@@ -57,7 +57,10 @@ continue` let the run go on, and no camera recorded; `4` completed with partial
 camera loss: same conditions, but at least one camera recorded and at least one
 requested camera did not (lost at preflight, at start or during the session, e.g. 0
 frames). The log warning names the lost `group/camera` units. `--simulate` and runs
-without video exit `0`.
+without video exit `0`. `130` stopped by the operator (Ctrl-C), wherever it landed:
+before the task started, during it or during the shutdown; it takes precedence over `3`
+and `4`, and the camera record keeps the camera outcome. A run that ended by itself
+never exits `130`.
 
 ## Checking the cameras of a setup
 

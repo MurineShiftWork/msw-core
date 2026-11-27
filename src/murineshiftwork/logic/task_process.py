@@ -313,6 +313,28 @@ class TaskRunner(Thread):
         )
 
 
+#: Set when the operator ended a session of this process (``stop_task`` or a Ctrl-C
+#: reaching ``TaskProcess.__exit__``); the CLI reads it for the run's exit code.
+_operator_stopped = False
+
+
+def reset_operator_stop() -> None:
+    """Forget an operator stop of an earlier run in this process."""
+    global _operator_stopped
+    _operator_stopped = False
+
+
+def operator_stopped() -> bool:
+    """Whether the operator ended a session of this run."""
+    return _operator_stopped
+
+
+def mark_operator_stop() -> None:
+    """Record that the operator ended this run."""
+    global _operator_stopped
+    _operator_stopped = True
+
+
 class TaskProcess:
     """Manages one session: paths, bpod connection, task thread lifecycle.
 
@@ -592,6 +614,8 @@ class TaskProcess:
         operator_end = exc_type is not None and issubclass(exc_type, KeyboardInterrupt)
         if task_exc is not None or (exc_type is not None and not operator_end):
             return "aborted"
+        if operator_end:
+            mark_operator_stop()
         if self._stop_requested or operator_end:
             return "stopped"
         return "complete"
@@ -794,6 +818,7 @@ class TaskProcess:
         return self.task_runner.is_alive()
 
     def stop_task(self):
+        mark_operator_stop()
         if not self._stop_requested:
             self._stop_requested = True
             logging.warning(
