@@ -612,6 +612,12 @@ def test_a_group_raising_in_stop_does_not_leave_the_others_running(session_paths
     cams.stop("completed")
     assert _calls("video_flir").count("stop") == 2
     assert _calls("video_rce").count("stop") == 1
+    # the retried stop succeeded: the group ends as its cameras say
+    statuses = {p["group"]: p["status"] for p in peers(session_paths).values()}
+    assert statuses == {"behaviour": "complete", "pupil": "complete"}
+    record = read_cameras_record(session_paths["session_folder"])
+    assert [g.status for g in record.groups] == ["complete", "complete"]
+    assert cams.lost_cameras() == []
     cams.stop("completed")
     assert _calls("video_flir").count("stop") == 2
 
@@ -727,3 +733,24 @@ def test_backend_that_cannot_be_imported_names_what_to_install(monkeypatch):
     msg = str(exc.value)
     assert "cannot be imported (No module named 'aiohttp')" in msg
     assert "rpi-camera-ensemble[msw]>=0.9.0" in msg
+
+
+def test_an_interrupted_stop_never_retried_stays_failed(session_paths):
+    FakeBackend.throw = {("video_flir", "stop"): KeyboardInterrupt()}
+    cams = CameraSession([behaviour(), pupil()])
+    cams.start(session_paths)
+    with pytest.raises(KeyboardInterrupt):
+        cams.stop("completed")
+    assert cams.record().groups[0].status == "failed"
+    assert cams.lost_cameras() and cams.recorded_cameras()
+
+
+def test_a_start_exception_stays_failed_after_a_clean_stop(session_paths):
+    FakeBackend.throw = {("video_flir", "start"): RuntimeError("boom")}
+    cams = CameraSession([behaviour(), pupil()], policy="continue")
+    cams.open()
+    cams.start(session_paths)
+    FakeBackend.throw = {}
+    cams.stop("completed")
+    statuses = {p["group"]: p["status"] for p in peers(session_paths).values()}
+    assert statuses["behaviour"] == "failed"

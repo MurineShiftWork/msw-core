@@ -154,6 +154,9 @@ class _GroupRun:
     units: dict[str, CameraUnitRecord] = field(default_factory=dict)
     failed: set[str] = field(default_factory=set)
     raised: bool = False
+    # the backend's stop was interrupted (a BaseException); cleared in effect once a
+    # later stop succeeds
+    stop_interrupted: bool = False
     skipped: bool = False
     started: bool = False
     stopped: bool = False
@@ -171,16 +174,21 @@ class _GroupRun:
         return [s.name for s in self.specs] or list(self.units)
 
     @property
+    def broken(self) -> bool:
+        """A backend call raised, or the stop was interrupted and never completed."""
+        return self.raised or (self.stop_interrupted and not self.stopped)
+
+    @property
     def any_ok(self) -> bool:
         names = self.camera_names
-        return not self.raised and (
+        return not self.broken and (
             not names or any(n not in self.failed for n in names)
         )
 
     @property
     def status(self) -> str:
         names = self.camera_names
-        if self.raised or (names and all(n in self.failed for n in names)):
+        if self.broken or (names and all(n in self.failed for n in names)):
             return STATUS_FAILED
         return STATUS_PARTIAL if self.failed else STATUS_COMPLETE
 
@@ -452,7 +460,7 @@ class CameraSession:
         recorded: list[str] = []
         lost: list[str] = []
         for run in self._runs:
-            ok_group = run.started and not run.raised
+            ok_group = run.started and not run.broken
             for name in run.camera_names:
                 full = f"{run.label}/{name}"
                 (recorded if ok_group and name not in run.failed else lost).append(full)
@@ -620,14 +628,15 @@ class CameraSession:
         """Stop one group; its peer is finalised whatever happens.
 
         An exception escaping the backend's ``stop`` (only a ``BaseException``
-        does, ``_call`` turns the rest into results) marks the group failed and
-        leaves it not stopped, so the next ``stop`` tries again.
+        does, ``_call`` turns the rest into results) leaves the group not stopped
+        and failed, so the next ``stop`` tries again; once that one succeeds, the
+        group's status comes from its cameras' results.
         """
         try:
             try:
                 results = self._call(run, "stop", reason)
             except BaseException:
-                run.raised = True
+                run.stop_interrupted = True
                 raise
             finally:
                 run.record.stop = ClockAnchor.now()
