@@ -1,7 +1,8 @@
 """`msw run` exits 3 ("completed degraded") when the task asked for video (the
 ``record_video`` setting, or a camera session with a ``with_video`` group), the
 camera failure policy let the run go on, and no camera recorded; it exits 4 when
-some camera recorded and another requested one did not."""
+some camera recorded and another requested one did not, and 130 when the operator
+ended it (Ctrl-C), wherever the interrupt landed."""
 
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from msw_plugin_api.camera import UNIT_MISSING, UNIT_READY, UNIT_RECORDING, Unit
 from murineshiftwork import cli
 from murineshiftwork.cli import execute
 from murineshiftwork.hardware.camera.session import CameraSession
+from murineshiftwork.logic import task_process
 from murineshiftwork.logic.config.models import CameraGroup
 from murineshiftwork.logic.run_context import RunContext
 
@@ -194,3 +196,74 @@ def test_cli_exits_with_the_run_code(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         cli.run_cli(["run", "-t", "x"])
     assert exc.value.code == 3
+
+
+def _interrupt_at_stop(**kw):
+    """A task whose camera stop is interrupted by Ctrl-C (outside the task loop)."""
+    session = CameraSession(
+        [TWO], policy="continue", backend_loader=lambda _: _Backend(True)
+    )
+    session.open()
+    session.start_targets(
+        {"top": SimpleNamespace(acqdir=kw["out_path"] + "/top", basename="top")}
+    )
+    session.stop()
+    raise KeyboardInterrupt
+
+
+def _stop_in_loop(**kw):
+    """A task the operator ends in its loop (the task calls stop_task), losing a camera."""
+    _task(True, TWO, bad=("right",))(**kw)
+    task_process.mark_operator_stop()
+
+
+def _run_module(monkeypatch, tmp_path, run_task, *, simulate=False):
+    monkeypatch.setattr(
+        importlib, "import_module", lambda _name: SimpleNamespace(run_task=run_task)
+    )
+    ctx = RunContext(
+        command="run",
+        subject="m1",
+        task_name="demo",
+        out_path=str(tmp_path),
+        camera_failure="continue",
+        simulate=simulate,
+        task_settings={"record_video": True},
+    )
+    return execute.run_task(run_context=ctx, camera_groups=[TWO])
+
+
+def test_ctrl_c_outside_the_task_loop_exits_stopped(monkeypatch, tmp_path):
+    code = _run_module(monkeypatch, tmp_path, _interrupt_at_stop)
+    assert code == execute.EXIT_STOPPED == 130
+
+
+@pytest.mark.parametrize("simulate", [False, True], ids=["hardware", "simulate"])
+def test_operator_stop_in_the_loop_exits_stopped_over_partial(
+    monkeypatch, tmp_path, simulate
+):
+    code = _run_module(monkeypatch, tmp_path, _stop_in_loop, simulate=simulate)
+    assert code == execute.EXIT_STOPPED
+
+
+def test_a_run_after_a_stopped_one_is_not_stopped(monkeypatch, tmp_path):
+    assert _run_module(monkeypatch, tmp_path, _stop_in_loop) == execute.EXIT_STOPPED
+    assert _run(monkeypatch, tmp_path, cameras_ok=True) == 0
+
+
+def test_ctrl_c_reaching_the_session_exit_marks_the_stop():
+    task_process.reset_operator_stop()
+    tp = object.__new__(task_process.TaskProcess)
+    assert tp._end_status(KeyboardInterrupt, None) == "stopped"
+    assert task_process.operator_stopped()
+    task_process.reset_operator_stop()
+    assert tp._end_status(None, None) == "complete"
+    assert not task_process.operator_stopped()
+
+
+def test_cli_exits_130_on_an_operator_stop(monkeypatch):
+    monkeypatch.setattr(cli, "parse_args", lambda args: {"command": "run"})
+    monkeypatch.setattr(cli, "_dispatch", lambda args_dict: execute.EXIT_STOPPED)
+    with pytest.raises(SystemExit) as exc:
+        cli.run_cli(["run", "-t", "x"])
+    assert exc.value.code == 130

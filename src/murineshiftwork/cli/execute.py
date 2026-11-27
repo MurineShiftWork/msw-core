@@ -26,6 +26,11 @@ from murineshiftwork.logic.session_lock import (
     SetupLock,
     interrupt_running_acquisitions,
 )
+from murineshiftwork.logic.task_process import (
+    mark_operator_stop,
+    operator_stopped,
+    reset_operator_stop,
+)
 
 #: ``msw run`` exit code: the task completed, but recorded no camera although it
 #: asked for video (``camera_failure: continue`` let it go on)
@@ -34,6 +39,11 @@ EXIT_DEGRADED = 3
 #: ``msw run`` exit code: the task completed with video, but some requested camera
 #: did not record while at least one did (``camera_failure: continue``)
 EXIT_PARTIAL_CAMERAS = 4
+
+#: ``msw run`` exit code: the operator ended the run (Ctrl-C), wherever it landed:
+#: before the task started, during it or during the shutdown. It takes precedence
+#: over 3 and 4; the camera record and the log keep the camera outcome.
+EXIT_STOPPED = 130
 
 # Device factory: (typed device config, resolved serial port) -> a DeviceProtocol wrapper. Keyed
 # by the device *type* (SetupConfig device.type). Adding a device = a wrapper + one entry here.
@@ -230,7 +240,8 @@ def run_task(**args_dict):
     msw run -s subject -t task
     msw run -s subject -t task -p serial_port
 
-    Returns the run's exit code: 0, ``EXIT_DEGRADED`` or ``EXIT_PARTIAL_CAMERAS``.
+    Returns the run's exit code: 0, ``EXIT_DEGRADED``, ``EXIT_PARTIAL_CAMERAS`` or
+    ``EXIT_STOPPED``.
     """
     from murineshiftwork.logic.log import suppress_third_party_console_handlers
 
@@ -244,9 +255,15 @@ def run_task(**args_dict):
     # child process), so a task that builds its own connection cannot reach the rig.
     mark_simulated(ctx.simulate)
     reset_run_sessions()
+    reset_operator_stop()
     stale_camera_groups = args_dict.pop("setup_camera_groups", None)
-    with _setup_lock(ctx, stale_camera_groups):
-        _run_task_locked(ctx, args_dict)
+    try:
+        with _setup_lock(ctx, stale_camera_groups):
+            _run_task_locked(ctx, args_dict)
+    except KeyboardInterrupt:
+        # a Ctrl-C outside the task loop (camera warm-up, camera stop, teardown); the
+        # session, if one started, was finalised as stopped on the way out
+        mark_operator_stop()
     logging.debug("Task finished.")
     return _run_exit_code(ctx, args_dict)
 
@@ -276,7 +293,8 @@ def _setup_lock(ctx: RunContext, camera_groups: list | None):
 
 
 def _run_exit_code(ctx: RunContext, args_dict: dict) -> int:
-    """``EXIT_DEGRADED`` when the run should have recorded video, the camera failure
+    """``EXIT_STOPPED`` when the operator ended the run, whatever the cameras did;
+    ``EXIT_DEGRADED`` when the run should have recorded video, the camera failure
     policy let it go on, and no camera recorded; ``EXIT_PARTIAL_CAMERAS`` when some
     camera recorded and another requested one did not; else 0.
 
@@ -284,6 +302,14 @@ def _run_exit_code(ctx: RunContext, args_dict: dict) -> int:
     session of the task holds a ``with_video`` group: a task that records video by
     nature, or decides it from its own settings, has no ``record_video`` setting.
     """
+    if operator_stopped():
+        lost = run_lost_cameras()
+        logging.warning(
+            "Stopped by the operator; exit code %d%s",
+            EXIT_STOPPED,
+            f" (cameras that did not record: {', '.join(lost)})" if lost else "",
+        )
+        return EXIT_STOPPED
     if ctx.simulate:
         return 0
     if not (ctx.task_settings.get("record_video") or run_requested_video()):
